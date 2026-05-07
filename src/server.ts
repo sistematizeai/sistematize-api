@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { loadEnv } from './config/env.js';
+import { errorHandler } from './utils/errors.js';
 
 export async function buildApp() {
   const env = loadEnv();
@@ -15,6 +16,8 @@ export async function buildApp() {
     origin: [env.FRONTEND_ADMIN_URL, env.FRONTEND_DASHBOARD_URL, env.FRONTEND_PUBLIC_URL],
     credentials: true,
   });
+
+  app.setErrorHandler(errorHandler);
 
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 
