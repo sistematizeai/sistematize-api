@@ -150,14 +150,14 @@ CREATE TRIGGER trg_plans_updated_at
 -- ============================================
 -- RLS HELPER FUNCTIONS
 -- ============================================
-CREATE OR REPLACE FUNCTION auth.business_id() RETURNS uuid AS $$
+CREATE OR REPLACE FUNCTION public.get_business_id() RETURNS uuid AS $$
   SELECT COALESCE(
     (current_setting('request.jwt.claims', true)::json->>'business_id')::uuid,
     '00000000-0000-0000-0000-000000000000'::uuid
   );
 $$ LANGUAGE sql STABLE;
 
-CREATE OR REPLACE FUNCTION auth.user_role() RETURNS text AS $$
+CREATE OR REPLACE FUNCTION public.get_user_role() RETURNS text AS $$
   SELECT COALESCE(
     current_setting('request.jwt.claims', true)::json->>'role',
     'anonymous'
@@ -181,66 +181,66 @@ ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- profiles
 CREATE POLICY profiles_select ON profiles FOR SELECT USING (
-  auth.user_role() IN ('master_admin', 'sub_admin')
+  get_user_role() IN ('master_admin', 'sub_admin')
   OR id = auth.uid()
-  OR business_id = auth.business_id()
+  OR business_id = get_business_id()
 );
 CREATE POLICY profiles_insert ON profiles FOR INSERT WITH CHECK (true);
 CREATE POLICY profiles_update ON profiles FOR UPDATE USING (
-  auth.user_role() IN ('master_admin', 'sub_admin')
+  get_user_role() IN ('master_admin', 'sub_admin')
   OR id = auth.uid()
 );
 
 -- businesses
 CREATE POLICY businesses_select ON businesses FOR SELECT USING (
-  auth.user_role() IN ('master_admin', 'sub_admin')
-  OR id = auth.business_id()
+  get_user_role() IN ('master_admin', 'sub_admin')
+  OR id = get_business_id()
 );
 CREATE POLICY businesses_insert ON businesses FOR INSERT WITH CHECK (true);
 CREATE POLICY businesses_update ON businesses FOR UPDATE USING (
-  auth.user_role() IN ('master_admin', 'sub_admin')
-  OR id = auth.business_id()
+  get_user_role() IN ('master_admin', 'sub_admin')
+  OR id = get_business_id()
 );
 
 -- plans (readable by all authenticated, writable by admin)
 CREATE POLICY plans_select ON plans FOR SELECT USING (true);
 CREATE POLICY plans_insert ON plans FOR INSERT WITH CHECK (
-  auth.user_role() = 'master_admin'
+  get_user_role() = 'master_admin'
 );
 CREATE POLICY plans_update ON plans FOR UPDATE USING (
-  auth.user_role() = 'master_admin'
+  get_user_role() = 'master_admin'
 );
 
 -- modules (readable by all authenticated, writable by admin)
 CREATE POLICY modules_select ON modules FOR SELECT USING (true);
 CREATE POLICY modules_insert ON modules FOR INSERT WITH CHECK (
-  auth.user_role() = 'master_admin'
+  get_user_role() = 'master_admin'
 );
 CREATE POLICY modules_update ON modules FOR UPDATE USING (
-  auth.user_role() = 'master_admin'
+  get_user_role() = 'master_admin'
 );
 
 -- plan_modules
 CREATE POLICY plan_modules_select ON plan_modules FOR SELECT USING (true);
 CREATE POLICY plan_modules_insert ON plan_modules FOR INSERT WITH CHECK (
-  auth.user_role() = 'master_admin'
+  get_user_role() = 'master_admin'
 );
 CREATE POLICY plan_modules_delete ON plan_modules FOR DELETE USING (
-  auth.user_role() = 'master_admin'
+  get_user_role() = 'master_admin'
 );
 
 -- user_modules
 CREATE POLICY user_modules_select ON user_modules FOR SELECT USING (
-  auth.user_role() IN ('master_admin', 'sub_admin')
-  OR business_id = auth.business_id()
+  get_user_role() IN ('master_admin', 'sub_admin')
+  OR business_id = get_business_id()
 );
 CREATE POLICY user_modules_insert ON user_modules FOR INSERT WITH CHECK (
-  auth.user_role() = 'master_admin'
+  get_user_role() = 'master_admin'
 );
 
 -- audit_logs (admin only)
 CREATE POLICY audit_logs_select ON audit_logs FOR SELECT USING (
-  auth.user_role() = 'master_admin'
+  get_user_role() = 'master_admin'
 );
 CREATE POLICY audit_logs_insert ON audit_logs FOR INSERT WITH CHECK (true);
 

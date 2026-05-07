@@ -2,17 +2,6 @@
 -- Sub-projeto 2: Categories, Services, Collaborators, Clients, Appointments
 
 -- ============================================================
--- HELPER FUNCTION ALIASES (original functions in auth schema from 001)
--- ============================================================
-CREATE OR REPLACE FUNCTION public.get_business_id() RETURNS uuid AS $$
-  SELECT auth.business_id();
-$$ LANGUAGE sql STABLE;
-
-CREATE OR REPLACE FUNCTION public.get_user_role() RETURNS text AS $$
-  SELECT auth.user_role();
-$$ LANGUAGE sql STABLE;
-
--- ============================================================
 -- TABLES
 -- ============================================================
 
