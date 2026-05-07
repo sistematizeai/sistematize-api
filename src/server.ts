@@ -13,6 +13,13 @@ import { businessRoutes } from './modules/businesses/routes.js';
 import { planRoutes } from './modules/plans/routes.js';
 import { moduleRoutes } from './modules/modules/routes.js';
 import { auditRoutes } from './modules/audit/routes.js';
+import { categoryRoutes } from './modules/categories/routes.js';
+import { serviceRoutes } from './modules/services/routes.js';
+import { collaboratorRoutes } from './modules/collaborators/routes.js';
+import { clientRoutes } from './modules/clients/routes.js';
+import { appointmentRoutes } from './modules/appointments/routes.js';
+import { dashboardRoutes } from './modules/dashboard/routes.js';
+import { publicRoutes } from './modules/public/routes.js';
 
 export async function buildApp() {
   const env = loadEnv();
@@ -42,6 +49,13 @@ export async function buildApp() {
   await app.register(planRoutes);
   await app.register(moduleRoutes);
   await app.register(auditRoutes);
+  await app.register(categoryRoutes);
+  await app.register(serviceRoutes);
+  await app.register(collaboratorRoutes);
+  await app.register(clientRoutes);
+  await app.register(appointmentRoutes);
+  await app.register(dashboardRoutes);
+  await app.register(publicRoutes);
 
   return app;
 }
