@@ -2,11 +2,11 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as appointmentService from './service.js';
 
 export async function listHandler(
-  request: FastifyRequest<{ Querystring: { date?: string; status?: string; collaborator_id?: string; date_from?: string; date_to?: string } }>,
+  request: FastifyRequest<{ Querystring: { date?: string; status?: string; collaborator_id?: string; date_from?: string; date_to?: string; page?: number; limit?: number } }>,
   reply: FastifyReply
 ) {
-  const appointments = await appointmentService.listAppointments(request.user.business_id!, request.query);
-  return reply.send(appointments);
+  const result = await appointmentService.listAppointments(request.user.business_id!, request.query);
+  return reply.send(result);
 }
 
 export async function getHandler(

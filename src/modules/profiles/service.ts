@@ -29,19 +29,20 @@ export async function updateMyProfile(userId: string, updates: Record<string, un
 }
 
 export async function listProfiles(page = 1, limit = 20) {
+  const safeLimit = Math.min(limit, 100);
   const supabase = getSupabaseAdmin();
-  const offset = (page - 1) * limit;
+  const offset = (page - 1) * safeLimit;
 
   const { data, error, count } = await supabase
     .from('profiles')
     .select('id, full_name, document, document_type, role, business_id, is_active, created_at', { count: 'exact' })
-    .range(offset, offset + limit - 1)
+    .range(offset, offset + safeLimit - 1)
     .order('created_at', { ascending: false });
 
   if (error) throw new Error(error.message);
 
   const profiles = data || [];
-  if (profiles.length === 0) return { data: profiles, total: count || 0, page, limit };
+  if (profiles.length === 0) return { data: profiles, total: count || 0, page, limit: safeLimit };
 
   const emailResults = await Promise.all(
     profiles.map(p => supabase.auth.admin.getUserById(p.id)),
@@ -52,7 +53,7 @@ export async function listProfiles(page = 1, limit = 20) {
   }
 
   const enriched = profiles.map(p => ({ ...p, email: emails[p.id] || null }));
-  return { data: enriched, total: count || 0, page, limit };
+  return { data: enriched, total: count || 0, page, limit: safeLimit };
 }
 
 export async function adminUpdateProfile(profileId: string, updates: Record<string, unknown>) {

@@ -2,8 +2,9 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
 import { NotFoundError, ConflictError } from '../../utils/errors.js';
 
 export async function listClients(businessId: string, search?: string, page = 1, limit = 100) {
+  const safeLimit = Math.min(limit, 100);
   const supabase = getSupabaseAdmin();
-  const offset = (page - 1) * limit;
+  const offset = (page - 1) * safeLimit;
 
   let query = supabase
     .from('clients')
@@ -11,7 +12,7 @@ export async function listClients(businessId: string, search?: string, page = 1,
     .eq('business_id', businessId)
     .eq('is_active', true)
     .order('name', { ascending: true })
-    .range(offset, offset + limit - 1);
+    .range(offset, offset + safeLimit - 1);
 
   if (search) {
     const safe = search.replace(/[%_\\(),."']/g, '');
@@ -29,7 +30,7 @@ export async function listClients(businessId: string, search?: string, page = 1,
     appointments: undefined,
   }));
 
-  return { data: clients, total: count || 0, page, limit };
+  return { data: clients, total: count || 0, page, limit: safeLimit };
 }
 
 export async function getClient(id: string, businessId: string) {

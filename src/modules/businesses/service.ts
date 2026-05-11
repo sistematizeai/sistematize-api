@@ -68,13 +68,14 @@ export async function updateMyBusiness(businessId: string, updates: Record<strin
 }
 
 export async function listBusinesses(page = 1, limit = 20, search?: string, status?: string) {
+  const safeLimit = Math.min(limit, 100);
   const supabase = getSupabaseAdmin();
-  const offset = (page - 1) * limit;
+  const offset = (page - 1) * safeLimit;
 
   let query = supabase
     .from('businesses')
     .select(SELECT_FIELDS, { count: 'exact' })
-    .range(offset, offset + limit - 1)
+    .range(offset, offset + safeLimit - 1)
     .order('created_at', { ascending: false });
 
   if (status) {
@@ -94,7 +95,7 @@ export async function listBusinesses(page = 1, limit = 20, search?: string, stat
 
   const items = businesses || [];
   const enriched = await enrichBusinesses(supabase, items);
-  return { data: enriched, total: count || 0, page, limit };
+  return { data: enriched, total: count || 0, page, limit: safeLimit };
 }
 
 export async function getBusinessById(id: string) {

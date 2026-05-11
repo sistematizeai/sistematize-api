@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
 import { loadEnv } from './config/env.js';
 import { errorHandler } from './utils/errors.js';
@@ -29,6 +30,7 @@ export async function buildApp() {
   const env = loadEnv();
 
   const app = Fastify({
+    trustProxy: true,
     logger: {
       level: env.NODE_ENV === 'production' ? 'info' : 'debug',
     },
@@ -41,6 +43,9 @@ export async function buildApp() {
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   });
+  await app.register(helmet, {
+    contentSecurityPolicy: false,
+  });
   await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } });
   app.setErrorHandler(errorHandler);
   await registerRateLimit(app);
@@ -50,7 +55,14 @@ export async function buildApp() {
   await app.register(rbacPlugin);
   await app.register(auditPlugin);
 
-  app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+  app.get('/health', async () => {
+    try {
+      const { error } = await getSupabaseAdmin().from('businesses').select('id', { count: 'exact', head: true }).limit(1);
+      return { status: error ? 'degraded' : 'ok', timestamp: new Date().toISOString() };
+    } catch {
+      return { status: 'degraded', timestamp: new Date().toISOString() };
+    }
+  });
   await app.register(authRoutes);
   await app.register(profileRoutes);
   await app.register(businessRoutes);
@@ -81,6 +93,13 @@ async function start() {
     getSupabaseAdmin().from('businesses').select('id', { count: 'exact', head: true }).limit(1)
       .then(() => app.log.info('Supabase connection warmed up'))
       .catch(() => app.log.warn('Supabase warmup failed — first requests may be slow'));
+    const shutdown = async (signal: string) => {
+      app.log.info(`${signal} received, shutting down gracefully`);
+      await app.close();
+      process.exit(0);
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
     app.log.error(err);
     process.exit(1);

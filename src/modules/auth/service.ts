@@ -25,7 +25,7 @@ interface CompleteRegistrationInput {
 
 function signJWT(payload: { sub: string; role: string; business_id: string | null; email: string }) {
   const env = loadEnv();
-  return jwt.sign(payload, env.SUPABASE_JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(payload, env.SUPABASE_JWT_SECRET, { expiresIn: '24h', issuer: 'sistematize-api', audience: 'sistematize' });
 }
 
 export async function registerUser(input: RegisterInput) {

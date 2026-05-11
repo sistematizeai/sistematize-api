@@ -47,7 +47,7 @@ export function verifyTOTPToken(token: string, storedSecret: string): boolean {
   try {
     const base32 = resolveSecret(storedSecret);
     const totp = new TOTP({ secret: Secret.fromBase32(base32) });
-    const delta = totp.validate({ token, window: 1 });
+    const delta = totp.validate({ token, window: 0 });
     return delta !== null;
   } catch {
     return false;

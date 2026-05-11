@@ -68,6 +68,8 @@ export const listAppointmentsQuerySchema = {
       collaborator_id: { type: 'string', format: 'uuid' },
       date_from: { type: 'string', format: 'date' },
       date_to: { type: 'string', format: 'date' },
+      page: { type: 'integer', minimum: 1 },
+      limit: { type: 'integer', minimum: 1, maximum: 100 },
     },
   },
 } as const;

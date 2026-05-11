@@ -28,15 +28,20 @@ export async function listAppointments(businessId: string, filters: {
   collaborator_id?: string;
   date_from?: string;
   date_to?: string;
+  page?: number;
+  limit?: number;
 }) {
+  const safeLimit = Math.min(filters.limit || 100, 100);
+  const page = filters.page || 1;
+  const offset = (page - 1) * safeLimit;
   const supabase = getSupabaseAdmin();
   let query = supabase
     .from('appointments')
-    .select('*, client:clients(id, name, phone), collaborator:collaborators(id, name), appointment_services(*, service:services(id, name))')
+    .select('*, client:clients(id, name, phone), collaborator:collaborators(id, name), appointment_services(*, service:services(id, name))', { count: 'exact' })
     .eq('business_id', businessId)
     .order('date', { ascending: true })
     .order('start_time', { ascending: true })
-    .limit(500);
+    .range(offset, offset + safeLimit - 1);
 
   if (filters.date) query = query.eq('date', filters.date);
   if (filters.date_from) query = query.gte('date', filters.date_from);
@@ -47,9 +52,9 @@ export async function listAppointments(businessId: string, filters: {
   }
   if (filters.collaborator_id) query = query.eq('collaborator_id', filters.collaborator_id);
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw error;
-  return data;
+  return { data: data || [], total: count || 0, page, limit: safeLimit };
 }
 
 export async function getAppointment(id: string, businessId: string) {

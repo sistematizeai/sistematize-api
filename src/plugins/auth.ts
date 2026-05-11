@@ -28,7 +28,7 @@ async function authPluginFn(app: FastifyInstance) {
     const token = authHeader.substring(7);
     try {
       const secret = process.env.SUPABASE_JWT_SECRET || loadEnv().SUPABASE_JWT_SECRET;
-      const decoded = jwt.verify(token, secret) as {
+      const decoded = jwt.verify(token, secret, { issuer: 'sistematize-api', audience: 'sistematize' }) as {
         sub: string;
         role: string;
         business_id: string | null;

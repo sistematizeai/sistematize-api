@@ -98,7 +98,7 @@ export async function createPublicBooking(slug: string, input: {
   const minAdvanceHours = bs.min_advance_hours ?? 1;
   const maxAdvanceDays = bs.max_advance_days ?? 30;
 
-  const appointmentDate = new Date(`${input.date}T${input.start_time}:00`);
+  const appointmentDate = new Date(`${input.date}T${input.start_time}:00Z`);
   const now = new Date();
   const hoursUntil = (appointmentDate.getTime() - now.getTime()) / (1000 * 60 * 60);
   if (hoursUntil < minAdvanceHours) {

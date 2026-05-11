@@ -17,5 +17,11 @@ export async function publicRoutes(app: FastifyInstance) {
 
   app.post('/api/public/:slug/appointments', {
     schema: publicBookingSchema,
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: '1 minute',
+      },
+    },
   }, createBookingHandler);
 }
