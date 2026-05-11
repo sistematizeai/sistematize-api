@@ -55,6 +55,32 @@ export async function deleteHandler(
   return reply.status(204).send();
 }
 
+export async function getScheduleHandler(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+) {
+  const schedule = await collabService.getCollaboratorSchedule(request.params.id, request.user.business_id!);
+  return reply.send(schedule);
+}
+
+export async function updateScheduleHandler(
+  request: FastifyRequest<{ Params: { id: string }; Body: { schedules: Array<{ day_of_week: number; is_working?: boolean; work_start?: string; work_end?: string; lunch_start?: string | null; lunch_end?: string | null }> } }>,
+  reply: FastifyReply
+) {
+  const schedule = await collabService.updateCollaboratorSchedule(
+    request.params.id,
+    request.user.business_id!,
+    request.body.schedules
+  );
+  await request.server.audit(request, {
+    action: 'update',
+    entity_type: 'collaborator_schedule',
+    entity_id: request.params.id,
+    new_data: { schedules: schedule },
+  });
+  return reply.send(schedule);
+}
+
 export async function updateServicesHandler(
   request: FastifyRequest<{ Params: { id: string }; Body: { services: Array<{ service_id: string; commission?: number }> } }>,
   reply: FastifyReply

@@ -1,6 +1,7 @@
 export const updateProfileSchema = {
   body: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       full_name: { type: 'string', minLength: 2, maxLength: 100 },
       phone: { type: 'string', maxLength: 20 },
@@ -12,6 +13,7 @@ export const updateProfileSchema = {
 export const adminUpdateProfileSchema = {
   body: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       full_name: { type: 'string', minLength: 2, maxLength: 100 },
       phone: { type: 'string', maxLength: 20 },

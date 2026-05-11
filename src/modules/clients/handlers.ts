@@ -2,11 +2,13 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as clientService from './service.js';
 
 export async function listHandler(
-  request: FastifyRequest<{ Querystring: { search?: string } }>,
+  request: FastifyRequest<{ Querystring: { search?: string; page?: string; limit?: string } }>,
   reply: FastifyReply
 ) {
-  const clients = await clientService.listClients(request.user.business_id!, request.query.search);
-  return reply.send(clients);
+  const page = parseInt(request.query.page || '1', 10);
+  const limit = parseInt(request.query.limit || '100', 10);
+  const result = await clientService.listClients(request.user.business_id!, request.query.search, page, limit);
+  return reply.send({ data: result.data, total: result.total, page: result.page, limit: result.limit });
 }
 
 export async function getHandler(
@@ -49,6 +51,11 @@ export async function deleteHandler(
   request: FastifyRequest<{ Params: { id: string } }>,
   reply: FastifyReply
 ) {
+  await request.server.audit(request, {
+    action: 'delete',
+    entity_type: 'client',
+    entity_id: request.params.id,
+  });
   await clientService.deleteClient(request.params.id, request.user.business_id!);
   return reply.status(204).send();
 }

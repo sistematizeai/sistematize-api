@@ -12,6 +12,10 @@ export async function businessRoutes(app: FastifyInstance) {
     schema: schemas.updateBusinessSchema,
   }, handlers.updateMyBusinessHandler);
 
+  app.get('/api/businesses/stats', {
+    preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
+  }, handlers.statsHandler);
+
   app.get('/api/businesses', {
     preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
   }, handlers.listHandler);
@@ -22,12 +26,21 @@ export async function businessRoutes(app: FastifyInstance) {
 
   app.put('/api/businesses/:id', {
     preHandler: [app.authenticate, app.requireRole(['master_admin'])],
+    schema: schemas.adminUpdateBusinessSchema,
   }, handlers.adminUpdateHandler);
 
   app.patch('/api/businesses/:id/status', {
     preHandler: [app.authenticate, app.requireRole(['master_admin'])],
     schema: schemas.updateStatusSchema,
   }, handlers.updateStatusHandler);
+
+  app.post('/api/businesses/me/logo', {
+    preHandler: [app.authenticate],
+  }, handlers.uploadLogoHandler);
+
+  app.post('/api/businesses/me/cover', {
+    preHandler: [app.authenticate],
+  }, handlers.uploadCoverHandler);
 
   app.post('/api/businesses/block-expired', {
     preHandler: [app.authenticate, app.requireRole(['master_admin'])],

@@ -25,12 +25,12 @@ export async function updateMyBusinessHandler(
 }
 
 export async function listHandler(
-  request: FastifyRequest<{ Querystring: { page?: string; limit?: string } }>,
+  request: FastifyRequest<{ Querystring: { page?: string; limit?: string; search?: string; status?: string } }>,
   reply: FastifyReply,
 ) {
   const page = parseInt(request.query.page || '1', 10);
   const limit = parseInt(request.query.limit || '20', 10);
-  return reply.send(await service.listBusinesses(page, limit));
+  return reply.send(await service.listBusinesses(page, limit, request.query.search, request.query.status));
 }
 
 export async function getByIdHandler(
@@ -81,7 +81,61 @@ export async function updateStatusHandler(
   return reply.send(data);
 }
 
+export async function uploadLogoHandler(request: FastifyRequest, reply: FastifyReply) {
+  if (!request.user.business_id) throw new ForbiddenError('Sem negocio vinculado');
+  const file = await request.file();
+  if (!file) return reply.status(400).send({ error: 'Nenhum arquivo enviado' });
+
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  if (!allowedTypes.includes(file.mimetype)) {
+    return reply.status(400).send({ error: 'Tipo de arquivo nao suportado. Use JPG, PNG ou WebP.' });
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of file.file) chunks.push(chunk);
+  const buffer = Buffer.concat(chunks);
+
+  if (buffer.length > 2 * 1024 * 1024) {
+    return reply.status(400).send({ error: 'Arquivo muito grande. Maximo 2MB.' });
+  }
+
+  const data = await service.uploadBusinessImage(request.user.business_id, 'logo_url', buffer, file.mimetype);
+  return reply.send(data);
+}
+
+export async function uploadCoverHandler(request: FastifyRequest, reply: FastifyReply) {
+  if (!request.user.business_id) throw new ForbiddenError('Sem negocio vinculado');
+  const file = await request.file();
+  if (!file) return reply.status(400).send({ error: 'Nenhum arquivo enviado' });
+
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  if (!allowedTypes.includes(file.mimetype)) {
+    return reply.status(400).send({ error: 'Tipo de arquivo nao suportado. Use JPG, PNG ou WebP.' });
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of file.file) chunks.push(chunk);
+  const buffer = Buffer.concat(chunks);
+
+  if (buffer.length > 5 * 1024 * 1024) {
+    return reply.status(400).send({ error: 'Arquivo muito grande. Maximo 5MB.' });
+  }
+
+  const data = await service.uploadBusinessImage(request.user.business_id, 'cover_image_url', buffer, file.mimetype);
+  return reply.send(data);
+}
+
+export async function statsHandler(request: FastifyRequest, reply: FastifyReply) {
+  const data = await service.getBusinessStats();
+  return reply.send(data);
+}
+
 export async function blockExpiredHandler(request: FastifyRequest, reply: FastifyReply) {
   const result = await service.blockExpiredTrials();
+  await request.server.audit(request, {
+    action: 'block',
+    entity_type: 'business',
+    new_data: result,
+  });
   return reply.send(result);
 }

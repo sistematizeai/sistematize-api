@@ -2,6 +2,7 @@ export const createAppointmentSchema = {
   body: {
     type: 'object',
     required: ['client_id', 'collaborator_id', 'date', 'start_time', 'service_ids'],
+    additionalProperties: false,
     properties: {
       client_id: { type: 'string', format: 'uuid' },
       collaborator_id: { type: 'string', format: 'uuid' },
@@ -17,12 +18,14 @@ export const createAppointmentSchema = {
 export const updateAppointmentSchema = {
   body: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       collaborator_id: { type: 'string', format: 'uuid' },
       date: { type: 'string', format: 'date' },
       start_time: { type: 'string', pattern: '^\\d{2}:\\d{2}$' },
       notes: { type: 'string', maxLength: 2000 },
       payment_method: { type: 'string', enum: ['pix', 'credit', 'debit', 'cash'] },
+      cancel_reason: { type: 'string', maxLength: 2000 },
     },
   },
   params: {
@@ -36,6 +39,7 @@ export const updateStatusSchema = {
   body: {
     type: 'object',
     required: ['status'],
+    additionalProperties: false,
     properties: {
       status: { type: 'string', enum: ['scheduled', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'] },
     },

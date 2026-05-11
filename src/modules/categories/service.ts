@@ -78,7 +78,12 @@ export async function deleteCategory(id: string, businessId: string) {
     .from('categories')
     .delete()
     .eq('id', id)
-    .eq('business_id', businessId);
+    .eq('business_id', businessId)
+    .select('id')
+    .single();
 
-  if (error) throw error;
+  if (error) {
+    if (error.code === 'PGRST116') throw new NotFoundError('Categoria nao encontrada.');
+    throw error;
+  }
 }

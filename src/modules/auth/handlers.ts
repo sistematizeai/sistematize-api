@@ -20,6 +20,13 @@ export async function loginHandler(
   reply: FastifyReply,
 ) {
   const result = await authService.loginUser(request.body.email, request.body.password);
+  if (result.user?.id) {
+    await request.server.audit(request, {
+      action: 'login',
+      entity_type: 'profile',
+      entity_id: result.user.id,
+    });
+  }
   return reply.send(result);
 }
 
@@ -42,7 +49,7 @@ export async function confirm2FAHandler(
 ) {
   const result = await authService.confirm2FA(request.user.sub, request.body.totp_code);
   await request.server.audit(request, {
-    action: '2fa_verify',
+    action: '2fa_enable',
     entity_type: 'profile',
     entity_id: request.user.sub,
   });
@@ -74,10 +81,26 @@ export async function logoutHandler(request: FastifyRequest, reply: FastifyReply
 }
 
 export async function refreshHandler(request: FastifyRequest, reply: FastifyReply) {
-  const { sub, role, business_id, email } = request.user;
+  const { sub, email } = request.user;
+  const { getSupabaseAdmin } = await import('../../config/supabase.js');
+  const supabase = getSupabaseAdmin();
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role, business_id')
+    .eq('id', sub)
+    .single();
+
+  if (!profile) {
+    return reply.status(401).send({ error: 'Perfil nao encontrado' });
+  }
+
   const jwtModule = await import('jsonwebtoken');
   const { loadEnv } = await import('../../config/env.js');
   const env = loadEnv();
-  const token = jwtModule.default.sign({ sub, role, business_id, email }, env.SUPABASE_JWT_SECRET, { expiresIn: '7d' });
+  const token = jwtModule.default.sign(
+    { sub, role: profile.role, business_id: profile.business_id, email },
+    env.SUPABASE_JWT_SECRET,
+    { expiresIn: '7d' },
+  );
   return reply.send({ token });
 }

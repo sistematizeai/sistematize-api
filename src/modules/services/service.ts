@@ -82,13 +82,48 @@ export async function updateService(id: string, businessId: string, input: {
   return data;
 }
 
+export async function uploadServiceImage(id: string, businessId: string, fileBuffer: Buffer, mimeType: string) {
+  const supabase = getSupabaseAdmin();
+
+  const ext = mimeType.split('/')[1] || 'jpg';
+  const filePath = `${businessId}/${id}.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('service-images')
+    .upload(filePath, fileBuffer, { contentType: mimeType, upsert: true });
+
+  if (uploadError) throw uploadError;
+
+  const { data: urlData } = supabase.storage
+    .from('service-images')
+    .getPublicUrl(filePath);
+
+  const imageUrl = urlData.publicUrl;
+
+  const { data, error } = await supabase
+    .from('services')
+    .update({ image_url: imageUrl })
+    .eq('id', id)
+    .eq('business_id', businessId)
+    .select('*, category:categories(id, name, color)')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
 export async function deleteService(id: string, businessId: string) {
   const supabase = getSupabaseAdmin();
   const { error } = await supabase
     .from('services')
     .update({ is_active: false })
     .eq('id', id)
-    .eq('business_id', businessId);
+    .eq('business_id', businessId)
+    .select('id')
+    .single();
 
-  if (error) throw error;
+  if (error) {
+    if (error.code === 'PGRST116') throw new NotFoundError('Servico nao encontrado.');
+    throw error;
+  }
 }

@@ -10,7 +10,9 @@ export async function getMyProfile(userId: string) {
     .single();
 
   if (error || !data) throw new NotFoundError('Perfil nao encontrado');
-  return data;
+
+  const { data: authUser } = await supabase.auth.admin.getUserById(userId);
+  return { ...data, email: authUser?.user?.email || null };
 }
 
 export async function updateMyProfile(userId: string, updates: Record<string, unknown>) {
@@ -37,7 +39,20 @@ export async function listProfiles(page = 1, limit = 20) {
     .order('created_at', { ascending: false });
 
   if (error) throw new Error(error.message);
-  return { data: data || [], total: count || 0, page, limit };
+
+  const profiles = data || [];
+  if (profiles.length === 0) return { data: profiles, total: count || 0, page, limit };
+
+  const emailResults = await Promise.all(
+    profiles.map(p => supabase.auth.admin.getUserById(p.id)),
+  );
+  const emails: Record<string, string> = {};
+  for (const r of emailResults) {
+    if (r.data?.user) emails[r.data.user.id] = r.data.user.email || '';
+  }
+
+  const enriched = profiles.map(p => ({ ...p, email: emails[p.id] || null }));
+  return { data: enriched, total: count || 0, page, limit };
 }
 
 export async function adminUpdateProfile(profileId: string, updates: Record<string, unknown>) {

@@ -18,8 +18,17 @@ export async function getServicesHandler(
   return reply.send(services);
 }
 
+export async function getCombosHandler(
+  request: FastifyRequest<{ Params: { slug: string } }>,
+  reply: FastifyReply
+) {
+  const business = await publicService.getBusinessBySlug(request.params.slug);
+  const combos = await publicService.getPublicCombos(business.id);
+  return reply.send(combos);
+}
+
 export async function createBookingHandler(
-  request: FastifyRequest<{ Params: { slug: string }; Body: { client_name: string; client_phone: string; service_id: string; collaborator_id?: string; date: string; start_time: string; notes?: string } }>,
+  request: FastifyRequest<{ Params: { slug: string }; Body: { client_name: string; client_phone: string; service_id?: string; combo_id?: string; collaborator_id?: string; date: string; start_time: string; notes?: string } }>,
   reply: FastifyReply
 ) {
   const appointment = await publicService.createPublicBooking(request.params.slug, request.body);

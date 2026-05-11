@@ -1,14 +1,18 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { NotFoundError } from '../../utils/errors.js';
 
-export async function listPlans() {
+export async function listPlans(includeInactive = false) {
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase
+  let query = supabase
     .from('plans')
     .select('*')
-    .eq('is_active', true)
     .order('price_monthly', { ascending: true });
 
+  if (!includeInactive) {
+    query = query.eq('is_active', true);
+  }
+
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data || [];
 }

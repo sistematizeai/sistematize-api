@@ -32,10 +32,16 @@ export async function createHandler(
 }
 
 export async function updateHandler(
-  request: FastifyRequest<{ Params: { id: string }; Body: { collaborator_id?: string; date?: string; start_time?: string; notes?: string; payment_method?: string } }>,
+  request: FastifyRequest<{ Params: { id: string }; Body: { collaborator_id?: string; date?: string; start_time?: string; notes?: string; payment_method?: string; cancel_reason?: string } }>,
   reply: FastifyReply
 ) {
   const appointment = await appointmentService.updateAppointment(request.params.id, request.user.business_id!, request.body);
+  await request.server.audit(request, {
+    action: 'update',
+    entity_type: 'appointment',
+    entity_id: request.params.id,
+    new_data: appointment,
+  });
   return reply.send(appointment);
 }
 
@@ -58,5 +64,11 @@ export async function deleteHandler(
   reply: FastifyReply
 ) {
   await appointmentService.updateStatus(request.params.id, request.user.business_id!, 'cancelled');
+  await request.server.audit(request, {
+    action: 'delete',
+    entity_type: 'appointment',
+    entity_id: request.params.id,
+    new_data: { status: 'cancelled' },
+  });
   return reply.status(204).send();
 }

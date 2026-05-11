@@ -3,9 +3,15 @@ import * as handlers from './handlers.js';
 import * as schemas from './schemas.js';
 
 export async function authRoutes(app: FastifyInstance) {
-  app.post('/api/auth/register', { schema: schemas.registerSchema }, handlers.registerHandler);
-  app.post('/api/auth/login', { schema: schemas.loginSchema }, handlers.loginHandler);
-  app.post('/api/auth/verify-2fa', { schema: schemas.verify2FASchema }, handlers.verify2FAHandler);
+  const authRateLimit = {
+    config: {
+      rateLimit: { max: 10, timeWindow: '1 minute' },
+    },
+  };
+
+  app.post('/api/auth/register', { schema: schemas.registerSchema, ...authRateLimit }, handlers.registerHandler);
+  app.post('/api/auth/login', { schema: schemas.loginSchema, ...authRateLimit }, handlers.loginHandler);
+  app.post('/api/auth/verify-2fa', { schema: schemas.verify2FASchema, ...authRateLimit }, handlers.verify2FAHandler);
 
   app.post('/api/auth/logout', { preHandler: [app.authenticate] }, handlers.logoutHandler);
   app.post('/api/auth/refresh', { preHandler: [app.authenticate] }, handlers.refreshHandler);

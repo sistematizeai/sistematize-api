@@ -2,6 +2,7 @@ export const createServiceSchema = {
   body: {
     type: 'object',
     required: ['name', 'category_id'],
+    additionalProperties: false,
     properties: {
       name: { type: 'string', minLength: 1, maxLength: 200 },
       category_id: { type: 'string', format: 'uuid' },
@@ -18,6 +19,7 @@ export const createServiceSchema = {
 export const updateServiceSchema = {
   body: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       name: { type: 'string', minLength: 1, maxLength: 200 },
       category_id: { type: 'string', format: 'uuid' },

@@ -1,5 +1,7 @@
+import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import { loadEnv } from './config/env.js';
 import { errorHandler } from './utils/errors.js';
 import { registerRateLimit } from './middleware/rate-limit.js';
@@ -20,6 +22,8 @@ import { clientRoutes } from './modules/clients/routes.js';
 import { appointmentRoutes } from './modules/appointments/routes.js';
 import { dashboardRoutes } from './modules/dashboard/routes.js';
 import { publicRoutes } from './modules/public/routes.js';
+import { comboRoutes } from './modules/combos/routes.js';
+import { getSupabaseAdmin } from './config/supabase.js';
 
 export async function buildApp() {
   const env = loadEnv();
@@ -30,10 +34,14 @@ export async function buildApp() {
     },
   });
 
+  const corsOrigins = [env.FRONTEND_ADMIN_URL, env.FRONTEND_DASHBOARD_URL, env.FRONTEND_PUBLIC_URL];
+  if (process.env.FRONTEND_TUNNEL_URL) corsOrigins.push(process.env.FRONTEND_TUNNEL_URL);
   await app.register(cors, {
-    origin: [env.FRONTEND_ADMIN_URL, env.FRONTEND_DASHBOARD_URL, env.FRONTEND_PUBLIC_URL],
+    origin: env.NODE_ENV === 'development' ? true : corsOrigins,
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   });
+  await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } });
   app.setErrorHandler(errorHandler);
   await registerRateLimit(app);
   await registerSanitizer(app);
@@ -56,6 +64,7 @@ export async function buildApp() {
   await app.register(appointmentRoutes);
   await app.register(dashboardRoutes);
   await app.register(publicRoutes);
+  await app.register(comboRoutes);
 
   return app;
 }
@@ -67,6 +76,11 @@ async function start() {
   try {
     await app.listen({ port: env.PORT, host: env.HOST });
     app.log.info(`Server running on http://${env.HOST}:${env.PORT}`);
+
+    // Warmup: wake Supabase connection to avoid cold-start latency on first request
+    getSupabaseAdmin().from('businesses').select('id', { count: 'exact', head: true }).limit(1)
+      .then(() => app.log.info('Supabase connection warmed up'))
+      .catch(() => app.log.warn('Supabase warmup failed — first requests may be slow'));
   } catch (err) {
     app.log.error(err);
     process.exit(1);

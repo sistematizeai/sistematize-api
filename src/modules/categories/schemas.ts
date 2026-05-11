@@ -2,6 +2,7 @@ export const createCategorySchema = {
   body: {
     type: 'object',
     required: ['name'],
+    additionalProperties: false,
     properties: {
       name: { type: 'string', minLength: 1, maxLength: 100 },
       color: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' },
@@ -15,6 +16,7 @@ export const createCategorySchema = {
 export const updateCategorySchema = {
   body: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       name: { type: 'string', minLength: 1, maxLength: 100 },
       color: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' },

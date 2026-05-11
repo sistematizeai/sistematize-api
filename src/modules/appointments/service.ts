@@ -10,10 +10,14 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
   no_show: [],
 };
 
+function normalizeTime(time: string): string {
+  return time.substring(0, 5);
+}
+
 function addMinutesToTime(time: string, minutes: number): string {
-  const [h, m] = time.split(':').map(Number);
+  const [h, m] = normalizeTime(time).split(':').map(Number);
   const totalMinutes = h * 60 + m + minutes;
-  const newH = Math.floor(totalMinutes / 60);
+  const newH = Math.floor(totalMinutes / 60) % 24;
   const newM = totalMinutes % 60;
   return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
 }
@@ -31,12 +35,16 @@ export async function listAppointments(businessId: string, filters: {
     .select('*, client:clients(id, name, phone), collaborator:collaborators(id, name), appointment_services(*, service:services(id, name))')
     .eq('business_id', businessId)
     .order('date', { ascending: true })
-    .order('start_time', { ascending: true });
+    .order('start_time', { ascending: true })
+    .limit(500);
 
   if (filters.date) query = query.eq('date', filters.date);
   if (filters.date_from) query = query.gte('date', filters.date_from);
   if (filters.date_to) query = query.lte('date', filters.date_to);
-  if (filters.status) query = query.eq('status', filters.status);
+  if (filters.status) {
+    const statuses = filters.status.split(',');
+    query = statuses.length > 1 ? query.in('status', statuses) : query.eq('status', filters.status);
+  }
   if (filters.collaborator_id) query = query.eq('collaborator_id', filters.collaborator_id);
 
   const { data, error } = await query;
@@ -106,6 +114,7 @@ export async function createAppointment(businessId: string, input: {
     .from('collaborator_services')
     .select('service_id')
     .eq('collaborator_id', input.collaborator_id)
+    .eq('is_active', true)
     .in('service_id', input.service_ids);
 
   const enabledServiceIds = new Set((collabServices || []).map(cs => cs.service_id));
@@ -114,56 +123,75 @@ export async function createAppointment(businessId: string, input: {
     throw new ValidationError('Colaborador nao esta habilitado para todos os servicos selecionados.');
   }
 
-  const totalDuration = services.reduce((sum, s) => sum + s.duration_minutes, 0);
+  const totalDuration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
   const totalPrice = services.reduce((sum, s) => sum + Number(s.price), 0);
   const endTime = addMinutesToTime(input.start_time, totalDuration);
 
-  if (input.start_time < collaborator.work_start || endTime > collaborator.work_end) {
+  const appointmentDate = new Date(input.date + 'T00:00:00');
+  const dayOfWeek = appointmentDate.getUTCDay();
+
+  const { data: daySchedule } = await supabase
+    .from('collaborator_schedules')
+    .select('is_working, work_start, work_end, lunch_start, lunch_end')
+    .eq('collaborator_id', input.collaborator_id)
+    .eq('day_of_week', dayOfWeek)
+    .maybeSingle();
+
+  const workStart = daySchedule?.work_start?.substring(0, 5) || normalizeTime(collaborator.work_start);
+  const workEnd = daySchedule?.work_end?.substring(0, 5) || normalizeTime(collaborator.work_end);
+
+  if (daySchedule && !daySchedule.is_working) {
+    throw new ValidationError('Colaborador nao trabalha neste dia da semana.');
+  }
+
+  if (normalizeTime(input.start_time) < workStart || normalizeTime(endTime) > workEnd) {
     throw new ValidationError('Horario fora da jornada do colaborador.');
   }
 
-  const { data: conflicts } = await supabase
-    .from('appointments')
-    .select('id')
-    .eq('collaborator_id', input.collaborator_id)
-    .eq('date', input.date)
-    .not('status', 'in', '("cancelled","no_show")')
-    .lt('start_time', endTime)
-    .gt('end_time', input.start_time);
-
-  if (conflicts && conflicts.length > 0) {
-    throw new ValidationError('Conflito de horario com outro agendamento do colaborador.');
+  if (daySchedule?.lunch_start && daySchedule?.lunch_end) {
+    const lunchStart = daySchedule.lunch_start.substring(0, 5);
+    const lunchEnd = daySchedule.lunch_end.substring(0, 5);
+    const aptStart = normalizeTime(input.start_time);
+    const aptEnd = normalizeTime(endTime);
+    if (aptStart < lunchEnd && aptEnd > lunchStart) {
+      throw new ValidationError(`Horario conflita com o intervalo de almoco (${lunchStart} - ${lunchEnd}).`);
+    }
   }
 
-  const { data: appointment, error: aptErr } = await supabase
-    .from('appointments')
-    .insert({
-      business_id: businessId,
-      client_id: input.client_id,
-      collaborator_id: input.collaborator_id,
-      date: input.date,
-      start_time: input.start_time,
-      end_time: endTime,
-      total_price: totalPrice,
-      total_duration: totalDuration,
-      status: 'scheduled',
-      notes: input.notes,
-      source: input.source || 'dashboard',
-    })
-    .select()
-    .single();
-
-  if (aptErr) throw aptErr;
-
-  const aptServices = services.map(s => ({
-    business_id: businessId,
-    appointment_id: appointment.id,
+  const svcPayload = services.map(s => ({
     service_id: s.id,
     price: s.price,
     duration_minutes: s.duration_minutes,
   }));
 
-  await supabase.from('appointment_services').insert(aptServices);
+  const { data: appointmentId, error: rpcErr } = await supabase.rpc('create_appointment_no_conflict', {
+    p_business_id: businessId,
+    p_client_id: input.client_id,
+    p_collaborator_id: input.collaborator_id,
+    p_date: input.date,
+    p_start_time: input.start_time,
+    p_end_time: endTime,
+    p_total_price: totalPrice,
+    p_total_duration: totalDuration,
+    p_notes: input.notes || null,
+    p_source: input.source || 'dashboard',
+    p_services: svcPayload,
+  });
+
+  if (rpcErr) {
+    if (rpcErr.message?.includes('APPOINTMENT_CONFLICT')) {
+      throw new ValidationError('Conflito de horario com outro agendamento do colaborador.');
+    }
+    throw rpcErr;
+  }
+
+  const { data: appointment, error: aptErr } = await supabase
+    .from('appointments')
+    .select()
+    .eq('id', appointmentId)
+    .single();
+
+  if (aptErr) throw aptErr;
 
   return appointment;
 }
@@ -174,20 +202,95 @@ export async function updateAppointment(id: string, businessId: string, input: {
   start_time?: string;
   notes?: string;
   payment_method?: string;
+  cancel_reason?: string;
 }) {
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase
+
+  const { data: current, error: fetchErr } = await supabase
     .from('appointments')
-    .update(input)
+    .select('status, total_duration, start_time, end_time, date, collaborator_id')
     .eq('id', id)
     .eq('business_id', businessId)
-    .select()
     .single();
 
-  if (error) {
-    if (error.code === 'PGRST116') throw new NotFoundError('Agendamento nao encontrado.');
-    throw error;
+  if (fetchErr || !current) throw new NotFoundError('Agendamento nao encontrado.');
+
+  const terminalStatuses = ['completed', 'cancelled', 'no_show'];
+  if (terminalStatuses.includes(current.status)) {
+    throw new ValidationError(`Nao e possivel editar um agendamento com status "${current.status}".`);
   }
+
+  const needsReschedule = !!(input.start_time || input.date || input.collaborator_id);
+
+  const finalDate = (input.date || current.date) as string;
+  const finalStartTime = (input.start_time || current.start_time) as string;
+  const finalEndTime = addMinutesToTime(finalStartTime, current.total_duration);
+  const finalCollaboratorId = (input.collaborator_id || current.collaborator_id) as string;
+
+  if (needsReschedule) {
+    const { data: collab, error: collabErr } = await supabase
+      .from('collaborators')
+      .select('id, work_start, work_end, is_active')
+      .eq('id', finalCollaboratorId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (collabErr || !collab) throw new NotFoundError('Colaborador nao encontrado.');
+    if (!collab.is_active) throw new ValidationError('Colaborador esta inativo.');
+
+    if (normalizeTime(finalStartTime) < normalizeTime(collab.work_start) || normalizeTime(finalEndTime) > normalizeTime(collab.work_end)) {
+      throw new ValidationError('Horario fora da jornada do colaborador.');
+    }
+
+    const { error: rpcErr } = await supabase.rpc('update_appointment_no_conflict', {
+      p_appointment_id: id,
+      p_business_id: businessId,
+      p_collaborator_id: finalCollaboratorId,
+      p_date: finalDate,
+      p_start_time: finalStartTime,
+      p_end_time: finalEndTime,
+      p_notes: input.notes || null,
+      p_payment_method: input.payment_method || null,
+      p_cancel_reason: input.cancel_reason || null,
+    });
+
+    if (rpcErr) {
+      if (rpcErr.message?.includes('APPOINTMENT_CONFLICT')) {
+        throw new ValidationError('Conflito de horario com outro agendamento do colaborador.');
+      }
+      if (rpcErr.message?.includes('APPOINTMENT_NOT_FOUND')) {
+        throw new NotFoundError('Agendamento nao encontrado.');
+      }
+      if (rpcErr.message?.includes('APPOINTMENT_TERMINAL_STATUS')) {
+        throw new ValidationError(`Nao e possivel editar um agendamento com status terminal.`);
+      }
+      throw rpcErr;
+    }
+  } else {
+    const updateData: Record<string, unknown> = {};
+    if (input.notes !== undefined) updateData.notes = input.notes;
+    if (input.payment_method !== undefined) updateData.payment_method = input.payment_method;
+    if (input.cancel_reason !== undefined) updateData.cancel_reason = input.cancel_reason;
+
+    if (Object.keys(updateData).length > 0) {
+      const { error } = await supabase
+        .from('appointments')
+        .update(updateData)
+        .eq('id', id)
+        .eq('business_id', businessId);
+
+      if (error) throw error;
+    }
+  }
+
+  const { data, error: getErr } = await supabase
+    .from('appointments')
+    .select()
+    .eq('id', id)
+    .eq('business_id', businessId)
+    .single();
+
+  if (getErr) throw getErr;
   return data;
 }
 
@@ -202,6 +305,16 @@ export async function updateStatus(id: string, businessId: string, newStatus: st
     .single();
 
   if (fetchErr || !current) throw new NotFoundError('Agendamento nao encontrado.');
+
+  if (current.status === newStatus) {
+    const { data } = await supabase
+      .from('appointments')
+      .select()
+      .eq('id', id)
+      .eq('business_id', businessId)
+      .single();
+    return data;
+  }
 
   const allowed = VALID_TRANSITIONS[current.status] || [];
   if (!allowed.includes(newStatus)) {

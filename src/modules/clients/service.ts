@@ -1,22 +1,35 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { NotFoundError, ConflictError } from '../../utils/errors.js';
 
-export async function listClients(businessId: string, search?: string) {
+export async function listClients(businessId: string, search?: string, page = 1, limit = 100) {
   const supabase = getSupabaseAdmin();
+  const offset = (page - 1) * limit;
+
   let query = supabase
     .from('clients')
-    .select('*')
+    .select('*, appointments(id)', { count: 'exact' })
     .eq('business_id', businessId)
     .eq('is_active', true)
-    .order('name', { ascending: true });
+    .order('name', { ascending: true })
+    .range(offset, offset + limit - 1);
 
   if (search) {
-    query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%`);
+    const safe = search.replace(/[%_\\(),."']/g, '');
+    if (safe) {
+      query = query.or(`name.ilike.%${safe}%,phone.ilike.%${safe}%`);
+    }
   }
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw error;
-  return data;
+
+  const clients = (data || []).map((c: any) => ({
+    ...c,
+    appointment_count: (c.appointments || []).length,
+    appointments: undefined,
+  }));
+
+  return { data: clients, total: count || 0, page, limit };
 }
 
 export async function getClient(id: string, businessId: string) {
@@ -100,9 +113,14 @@ export async function deleteClient(id: string, businessId: string) {
     .from('clients')
     .update({ is_active: false })
     .eq('id', id)
-    .eq('business_id', businessId);
+    .eq('business_id', businessId)
+    .select('id')
+    .single();
 
-  if (error) throw error;
+  if (error) {
+    if (error.code === 'PGRST116') throw new NotFoundError('Cliente nao encontrado.');
+    throw error;
+  }
 }
 
 export async function findOrCreateClientByPhone(businessId: string, name: string, phone: string) {

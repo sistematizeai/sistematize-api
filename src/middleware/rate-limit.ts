@@ -5,9 +5,7 @@ export async function registerRateLimit(app: FastifyInstance) {
   await app.register(rateLimit, {
     max: 100,
     timeWindow: '1 minute',
-    keyGenerator: (request) => {
-      return (request.headers['x-forwarded-for'] as string) || request.ip;
-    },
+    keyGenerator: (request) => request.ip,
     errorResponseBuilder: () => ({
       error: 'RATE_LIMIT',
       message: 'Muitas requisicoes. Tente novamente em alguns minutos.',

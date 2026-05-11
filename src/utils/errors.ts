@@ -41,10 +41,24 @@ export class ValidationError extends AppError {
   }
 }
 
-export function errorHandler(error: Error, request: FastifyRequest, reply: FastifyReply) {
+export function errorHandler(error: Error & { statusCode?: number; validation?: unknown }, request: FastifyRequest, reply: FastifyReply) {
   if (error instanceof AppError) {
     return reply.status(error.statusCode).send({
       error: error.code,
+      message: error.message,
+    });
+  }
+
+  if (error.validation) {
+    return reply.status(400).send({
+      error: 'VALIDATION_ERROR',
+      message: error.message,
+    });
+  }
+
+  if (error.statusCode && error.statusCode < 500) {
+    return reply.status(error.statusCode).send({
+      error: 'REQUEST_ERROR',
       message: error.message,
     });
   }

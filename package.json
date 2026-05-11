@@ -17,13 +17,16 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
+    "@fastify/multipart": "^10.0.0",
     "@fastify/rate-limit": "^10.3.0",
     "@supabase/supabase-js": "^2.105.3",
+    "dotenv": "^17.4.2",
     "fastify": "^5.8.5",
     "fastify-plugin": "^5.1.0",
     "jsonwebtoken": "^9.0.3",
     "otpauth": "^9.5.1",
     "qrcode": "^1.5.4",
+    "ws": "^8.20.0",
     "xss": "^1.0.15"
   },
   "devDependencies": {

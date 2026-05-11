@@ -1,5 +1,5 @@
 export function sanitizeDocument(doc: string): string {
-  return doc.replace(/[.\-\/]/g, '');
+  return doc.trim().replace(/[^0-9]/g, '');
 }
 
 export function detectDocumentType(doc: string): 'cpf' | 'cnpj' | null {

@@ -21,7 +21,7 @@ async function auditPluginFn(app: FastifyInstance) {
     const supabase = getSupabaseAdmin();
     const ip = request.headers['x-forwarded-for'] as string || request.ip;
 
-    await supabase.from('audit_logs').insert({
+    const { error } = await supabase.from('audit_logs').insert({
       profile_id: request.user?.sub || null,
       business_id: request.user?.business_id || null,
       action: entry.action,
@@ -31,6 +31,9 @@ async function auditPluginFn(app: FastifyInstance) {
       new_data: entry.new_data || null,
       ip_address: ip,
     });
+    if (error) {
+      request.log.error({ err: error }, 'Failed to write audit log');
+    }
   });
 }
 

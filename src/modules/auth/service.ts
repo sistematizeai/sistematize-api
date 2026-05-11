@@ -1,7 +1,7 @@
-import { getSupabaseAdmin } from '../../config/supabase.js';
+import { getSupabaseAdmin, getSupabaseAuth } from '../../config/supabase.js';
 import { validateDocument } from '../../utils/document.js';
 import { generateSlug } from '../../utils/slug.js';
-import { generateTOTPSecret, verifyTOTPToken, generateQRCodeURL } from '../../utils/totp.js';
+import { generateTOTPSecret, verifyTOTPToken, generateQRCodeURL, encryptSecret } from '../../utils/totp.js';
 import { AppError, ConflictError, UnauthorizedError, ValidationError } from '../../utils/errors.js';
 import jwt from 'jsonwebtoken';
 import { loadEnv } from '../../config/env.js';
@@ -49,7 +49,7 @@ export async function registerUser(input: RegisterInput) {
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email: input.email,
     password: input.password,
-    email_confirm: false,
+    email_confirm: true,
   });
 
   if (authError || !authData.user) {
@@ -80,6 +80,20 @@ export async function registerUser(input: RegisterInput) {
   const trialEndsAt = new Date();
   trialEndsAt.setDate(trialEndsAt.getDate() + 7);
 
+  const { error: profileError } = await supabase.from('profiles').insert({
+    id: userId,
+    full_name: input.full_name,
+    document: docResult.clean,
+    document_type: docResult.type,
+    role: 'owner',
+    business_id: null,
+  });
+
+  if (profileError) {
+    await supabase.auth.admin.deleteUser(userId);
+    throw new AppError(500, 'Erro ao criar perfil');
+  }
+
   const { data: business, error: bizError } = await supabase
     .from('businesses')
     .insert({
@@ -94,22 +108,18 @@ export async function registerUser(input: RegisterInput) {
     .single();
 
   if (bizError || !business) {
+    await supabase.from('profiles').delete().eq('id', userId);
     await supabase.auth.admin.deleteUser(userId);
     throw new AppError(500, 'Erro ao criar negocio');
   }
 
-  const { error: profileError } = await supabase.from('profiles').insert({
-    id: userId,
-    full_name: input.full_name,
-    document: docResult.clean,
-    document_type: docResult.type,
-    role: 'owner',
-    business_id: business.id,
-  });
+  const { error: linkError } = await supabase.from('profiles').update({ business_id: business.id }).eq('id', userId);
 
-  if (profileError) {
+  if (linkError) {
+    await supabase.from('businesses').delete().eq('id', business.id);
+    await supabase.from('profiles').delete().eq('id', userId);
     await supabase.auth.admin.deleteUser(userId);
-    throw new AppError(500, 'Erro ao criar perfil');
+    throw new AppError(500, 'Erro ao vincular perfil ao negocio');
   }
 
   const token = signJWT({
@@ -124,8 +134,9 @@ export async function registerUser(input: RegisterInput) {
 
 export async function loginUser(email: string, password: string) {
   const supabase = getSupabaseAdmin();
+  const supabaseAuth = getSupabaseAuth();
 
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
 
   if (error || !data.user) {
     throw new UnauthorizedError('Email ou senha incorretos');
@@ -220,6 +231,16 @@ export async function verify2FA(tempToken: string, totpCode: string) {
 export async function setup2FA(userId: string) {
   const supabase = getSupabaseAdmin();
 
+  const { data: existingProfile } = await supabase
+    .from('profiles')
+    .select('totp_enabled')
+    .eq('id', userId)
+    .single();
+
+  if (existingProfile?.totp_enabled) {
+    throw new ValidationError('2FA ja esta ativo. Desative antes de reconfigurar.');
+  }
+
   const { data: authUser } = await supabase.auth.admin.getUserById(userId);
   const email = authUser.user?.email || '';
 
@@ -227,12 +248,13 @@ export async function setup2FA(userId: string) {
   const otpauthUrl = generateQRCodeURL(secret, email, 'Sistematize');
   const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
 
+  const encrypted = encryptSecret(secret);
   await supabase
     .from('profiles')
-    .update({ totp_secret: secret })
+    .update({ totp_secret: encrypted })
     .eq('id', userId);
 
-  return { qr_code: qrCodeDataUrl, secret };
+  return { qr_code: qrCodeDataUrl };
 }
 
 export async function confirm2FA(userId: string, totpCode: string) {
@@ -307,6 +329,22 @@ export async function completeGoogleRegistration(input: CompleteRegistrationInpu
   const trialEndsAt = new Date();
   trialEndsAt.setDate(trialEndsAt.getDate() + 7);
 
+  const { data: authUser } = await supabase.auth.admin.getUserById(input.userId);
+  const fullName = input.full_name || authUser.user?.user_metadata?.full_name || 'Usuario';
+
+  const { error: profileError } = await supabase.from('profiles').insert({
+    id: input.userId,
+    full_name: fullName,
+    document: docResult.clean,
+    document_type: docResult.type,
+    role: 'owner',
+    business_id: null,
+  });
+
+  if (profileError) {
+    throw new AppError(500, 'Erro ao criar perfil');
+  }
+
   const { data: business, error: bizError } = await supabase
     .from('businesses')
     .insert({
@@ -321,23 +359,16 @@ export async function completeGoogleRegistration(input: CompleteRegistrationInpu
     .single();
 
   if (bizError || !business) {
+    await supabase.from('profiles').delete().eq('id', input.userId);
     throw new AppError(500, 'Erro ao criar negocio');
   }
 
-  const { data: authUser } = await supabase.auth.admin.getUserById(input.userId);
-  const fullName = input.full_name || authUser.user?.user_metadata?.full_name || 'Usuario';
+  const { error: linkError } = await supabase.from('profiles').update({ business_id: business.id }).eq('id', input.userId);
 
-  const { error: profileError } = await supabase.from('profiles').insert({
-    id: input.userId,
-    full_name: fullName,
-    document: docResult.clean,
-    document_type: docResult.type,
-    role: 'owner',
-    business_id: business.id,
-  });
-
-  if (profileError) {
-    throw new AppError(500, 'Erro ao criar perfil');
+  if (linkError) {
+    await supabase.from('businesses').delete().eq('id', business.id);
+    await supabase.from('profiles').delete().eq('id', input.userId);
+    throw new AppError(500, 'Erro ao vincular perfil ao negocio');
   }
 
   const token = signJWT({

@@ -21,7 +21,8 @@ async function verify2FAFromHeader(request: FastifyRequest) {
 }
 
 export async function listHandler(request: FastifyRequest, reply: FastifyReply) {
-  return reply.send(await service.listPlans());
+  const isAdmin = ['master_admin', 'sub_admin'].includes(request.user.role);
+  return reply.send(await service.listPlans(isAdmin));
 }
 
 export async function createHandler(

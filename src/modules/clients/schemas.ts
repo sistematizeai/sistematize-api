@@ -2,6 +2,7 @@ export const createClientSchema = {
   body: {
     type: 'object',
     required: ['name'],
+    additionalProperties: false,
     properties: {
       name: { type: 'string', minLength: 1, maxLength: 200 },
       phone: { type: 'string', maxLength: 20 },
@@ -16,6 +17,7 @@ export const createClientSchema = {
 export const updateClientSchema = {
   body: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       name: { type: 'string', minLength: 1, maxLength: 200 },
       phone: { type: 'string', maxLength: 20 },
