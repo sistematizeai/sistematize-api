@@ -30,3 +30,36 @@ export const publicBookingSchema = {
     properties: { slug: { type: 'string' } },
   },
 } as const;
+
+export const clientDataDeleteSchema = {
+  body: {
+    type: 'object',
+    required: ['client_phone', 'confirm'],
+    additionalProperties: false,
+    properties: {
+      client_phone: { type: 'string', minLength: 10, maxLength: 20, pattern: '^[0-9]+$' },
+      confirm: { type: 'boolean', enum: [true] },
+    },
+  },
+  params: {
+    type: 'object',
+    required: ['slug'],
+    properties: { slug: { type: 'string' } },
+  },
+} as const;
+
+export const clientDataRequestSchema = {
+  body: {
+    type: 'object',
+    required: ['client_phone'],
+    additionalProperties: false,
+    properties: {
+      client_phone: { type: 'string', minLength: 10, maxLength: 20, pattern: '^[0-9]+$' },
+    },
+  },
+  params: {
+    type: 'object',
+    required: ['slug'],
+    properties: { slug: { type: 'string' } },
+  },
+} as const;

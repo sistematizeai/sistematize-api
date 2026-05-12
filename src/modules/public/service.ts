@@ -73,6 +73,109 @@ export async function getPublicCombos(businessId: string) {
   }).filter((c: any) => c.services.length > 0);
 }
 
+export async function getClientData(slug: string, clientPhone: string) {
+  const supabase = getSupabaseAdmin();
+
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('id, name')
+    .eq('slug', slug)
+    .eq('is_active', true)
+    .single();
+
+  if (!biz) throw new NotFoundError('Salao nao encontrado.');
+
+  const { data: client } = await supabase
+    .from('clients')
+    .select('id, name, phone, email, birth_date, source, notes, lgpd_consent_at, created_at')
+    .eq('business_id', biz.id)
+    .eq('phone', clientPhone)
+    .single();
+
+  if (!client) throw new NotFoundError('Nenhum cadastro encontrado com esse telefone.');
+
+  const { data: appointments } = await supabase
+    .from('appointments')
+    .select('id, date, start_time, end_time, status, total_price, notes, created_at, appointment_services(service:services(name, price)), collaborator:collaborators(name)')
+    .eq('client_id', client.id)
+    .eq('business_id', biz.id)
+    .order('date', { ascending: false })
+    .limit(200);
+
+  return {
+    business_name: biz.name,
+    personal_data: {
+      name: client.name,
+      phone: client.phone,
+      email: client.email,
+      birth_date: client.birth_date,
+      source: client.source,
+      notes: client.notes,
+      lgpd_consent_at: client.lgpd_consent_at,
+      registered_at: client.created_at,
+    },
+    appointments: (appointments || []).map((a: any) => ({
+      id: a.id,
+      date: a.date,
+      start_time: a.start_time,
+      end_time: a.end_time,
+      status: a.status,
+      total_price: a.total_price,
+      notes: a.notes,
+      created_at: a.created_at,
+      services: (a.appointment_services || []).map((as: any) => ({
+        name: as.service?.name,
+        price: as.service?.price,
+      })),
+      collaborator: a.collaborator?.name || null,
+    })),
+    exported_at: new Date().toISOString(),
+  };
+}
+
+export async function deleteClientData(slug: string, clientPhone: string) {
+  const supabase = getSupabaseAdmin();
+
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('slug', slug)
+    .eq('is_active', true)
+    .single();
+
+  if (!biz) throw new NotFoundError('Salao nao encontrado.');
+
+  const { data: client } = await supabase
+    .from('clients')
+    .select('id')
+    .eq('business_id', biz.id)
+    .eq('phone', clientPhone)
+    .single();
+
+  if (!client) throw new NotFoundError('Nenhum cadastro encontrado com esse telefone.');
+
+  await supabase
+    .from('appointments')
+    .update({ notes: null })
+    .eq('client_id', client.id)
+    .eq('business_id', biz.id);
+
+  await supabase
+    .from('clients')
+    .update({
+      name: 'Cliente removido',
+      phone: `deleted_${client.id.slice(0, 8)}`,
+      email: null,
+      birth_date: null,
+      notes: null,
+      is_active: false,
+      lgpd_consent_at: null,
+    })
+    .eq('id', client.id);
+
+  return { message: 'Dados anonimizados com sucesso.' };
+}
+
 export async function createPublicBooking(slug: string, input: {
   client_name: string;
   client_phone: string;
