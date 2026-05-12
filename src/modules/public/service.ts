@@ -83,6 +83,7 @@ export async function createPublicBooking(slug: string, input: {
   date: string;
   start_time: string;
   notes?: string;
+  lgpd_consent?: boolean;
 }) {
   const supabaseForBiz = getSupabaseAdmin();
   const { data: bizRaw } = await supabaseForBiz
@@ -135,7 +136,7 @@ export async function createPublicBooking(slug: string, input: {
     throw new ValidationError('Informe service_id ou combo_id.');
   }
 
-  const client = await findOrCreateClientByPhone(business.id, input.client_name, input.client_phone, input.client_email);
+  const client = await findOrCreateClientByPhone(business.id, input.client_name, input.client_phone, input.client_email, input.lgpd_consent);
 
   let collaboratorId = input.collaborator_id;
 

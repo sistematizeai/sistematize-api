@@ -124,7 +124,7 @@ export async function deleteClient(id: string, businessId: string) {
   }
 }
 
-export async function findOrCreateClientByPhone(businessId: string, name: string, phone: string, email?: string) {
+export async function findOrCreateClientByPhone(businessId: string, name: string, phone: string, email?: string, lgpdConsent?: boolean) {
   const supabase = getSupabaseAdmin();
 
   const { data: existing } = await supabase
@@ -135,16 +135,22 @@ export async function findOrCreateClientByPhone(businessId: string, name: string
     .single();
 
   if (existing) {
-    if (email && !existing.email) {
-      await supabase.from('clients').update({ email }).eq('id', existing.id);
-      return { ...existing, email };
+    const updates: Record<string, unknown> = {};
+    if (email && !existing.email) updates.email = email;
+    if (lgpdConsent && !existing.lgpd_consent_at) updates.lgpd_consent_at = new Date().toISOString();
+    if (Object.keys(updates).length > 0) {
+      await supabase.from('clients').update(updates).eq('id', existing.id);
+      return { ...existing, ...updates };
     }
     return existing;
   }
 
   const { data, error } = await supabase
     .from('clients')
-    .insert({ business_id: businessId, name, phone, email: email || null, source: 'public_page' })
+    .insert({
+      business_id: businessId, name, phone, email: email || null, source: 'public_page',
+      lgpd_consent_at: lgpdConsent ? new Date().toISOString() : null,
+    })
     .select()
     .single();
 
