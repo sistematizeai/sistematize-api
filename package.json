@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc || true",
-    "start": "node dist/server.js",
+    "start": "node --trace-warnings dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
