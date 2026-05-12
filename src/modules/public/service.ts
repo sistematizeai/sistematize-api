@@ -76,6 +76,7 @@ export async function getPublicCombos(businessId: string) {
 export async function createPublicBooking(slug: string, input: {
   client_name: string;
   client_phone: string;
+  client_email?: string;
   service_id?: string;
   combo_id?: string;
   collaborator_id?: string;
@@ -134,7 +135,7 @@ export async function createPublicBooking(slug: string, input: {
     throw new ValidationError('Informe service_id ou combo_id.');
   }
 
-  const client = await findOrCreateClientByPhone(business.id, input.client_name, input.client_phone);
+  const client = await findOrCreateClientByPhone(business.id, input.client_name, input.client_phone, input.client_email);
 
   let collaboratorId = input.collaborator_id;
 

@@ -20,6 +20,7 @@ export const publicBookingSchema = {
       date: { type: 'string', format: 'date' },
       start_time: { type: 'string', pattern: '^\\d{2}:\\d{2}$' },
       notes: { type: 'string', maxLength: 500 },
+      client_email: { type: 'string', format: 'email', maxLength: 200 },
     },
   },
   params: {

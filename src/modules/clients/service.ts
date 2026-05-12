@@ -124,7 +124,7 @@ export async function deleteClient(id: string, businessId: string) {
   }
 }
 
-export async function findOrCreateClientByPhone(businessId: string, name: string, phone: string) {
+export async function findOrCreateClientByPhone(businessId: string, name: string, phone: string, email?: string) {
   const supabase = getSupabaseAdmin();
 
   const { data: existing } = await supabase
@@ -134,11 +134,17 @@ export async function findOrCreateClientByPhone(businessId: string, name: string
     .eq('phone', phone)
     .single();
 
-  if (existing) return existing;
+  if (existing) {
+    if (email && !existing.email) {
+      await supabase.from('clients').update({ email }).eq('id', existing.id);
+      return { ...existing, email };
+    }
+    return existing;
+  }
 
   const { data, error } = await supabase
     .from('clients')
-    .insert({ business_id: businessId, name, phone, source: 'public_page' })
+    .insert({ business_id: businessId, name, phone, email: email || null, source: 'public_page' })
     .select()
     .single();
 

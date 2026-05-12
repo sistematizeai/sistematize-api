@@ -28,7 +28,7 @@ export async function getCombosHandler(
 }
 
 export async function createBookingHandler(
-  request: FastifyRequest<{ Params: { slug: string }; Body: { client_name: string; client_phone: string; service_id?: string; combo_id?: string; collaborator_id?: string; date: string; start_time: string; notes?: string } }>,
+  request: FastifyRequest<{ Params: { slug: string }; Body: { client_name: string; client_phone: string; client_email?: string; service_id?: string; combo_id?: string; collaborator_id?: string; date: string; start_time: string; notes?: string } }>,
   reply: FastifyReply
 ) {
   const appointment = await publicService.createPublicBooking(request.params.slug, request.body);
