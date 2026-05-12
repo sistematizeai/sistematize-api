@@ -24,6 +24,9 @@ import { appointmentRoutes } from './modules/appointments/routes.js';
 import { dashboardRoutes } from './modules/dashboard/routes.js';
 import { publicRoutes } from './modules/public/routes.js';
 import { comboRoutes } from './modules/combos/routes.js';
+import { integrationRoutes } from './modules/integrations/routes.js';
+import { asaasPaymentRoutes } from './modules/asaas-payments/routes.js';
+import { webhookRoutes } from './modules/webhooks/routes.js';
 import { getSupabaseAdmin } from './config/supabase.js';
 
 export async function buildApp() {
@@ -77,6 +80,9 @@ export async function buildApp() {
   await app.register(dashboardRoutes);
   await app.register(publicRoutes);
   await app.register(comboRoutes);
+  await app.register(integrationRoutes);
+  await app.register(asaasPaymentRoutes);
+  await app.register(webhookRoutes);
 
   return app;
 }

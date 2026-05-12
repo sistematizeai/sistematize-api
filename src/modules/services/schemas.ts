@@ -12,6 +12,9 @@ export const createServiceSchema = {
       duration_minutes: { type: 'integer', minimum: 5, maximum: 480 },
       is_active: { type: 'boolean' },
       sort_order: { type: 'integer', minimum: 0 },
+      requires_payment: { type: 'boolean' },
+      payment_type: { type: 'string', enum: ['none', 'deposit', 'full_payment', 'manual'] },
+      deposit_amount: { type: 'number', minimum: 0 },
     },
   },
 } as const;
@@ -29,6 +32,9 @@ export const updateServiceSchema = {
       duration_minutes: { type: 'integer', minimum: 5, maximum: 480 },
       is_active: { type: 'boolean' },
       sort_order: { type: 'integer', minimum: 0 },
+      requires_payment: { type: 'boolean' },
+      payment_type: { type: 'string', enum: ['none', 'deposit', 'full_payment', 'manual'] },
+      deposit_amount: { type: 'number', minimum: 0 },
     },
   },
   params: {

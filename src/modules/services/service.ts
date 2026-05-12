@@ -39,6 +39,9 @@ export async function createService(businessId: string, input: {
   duration_minutes?: number;
   is_active?: boolean;
   sort_order?: number;
+  requires_payment?: boolean;
+  payment_type?: string;
+  deposit_amount?: number;
 }) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
@@ -64,6 +67,9 @@ export async function updateService(id: string, businessId: string, input: {
   duration_minutes?: number;
   is_active?: boolean;
   sort_order?: number;
+  requires_payment?: boolean;
+  payment_type?: string;
+  deposit_amount?: number;
 }) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase

@@ -9,6 +9,9 @@ export interface Env {
   FRONTEND_DASHBOARD_URL: string;
   FRONTEND_PUBLIC_URL: string;
   TOTP_ENCRYPTION_KEY: string;
+  ASAAS_ENCRYPTION_KEY: string;
+  ASAAS_PLATFORM_API_KEY: string;
+  ASAAS_PLATFORM_ENV: 'sandbox' | 'production';
 }
 
 function requireEnv(name: string): string {
@@ -31,5 +34,8 @@ export function loadEnv(): Env {
     FRONTEND_DASHBOARD_URL: requireEnv('FRONTEND_DASHBOARD_URL'),
     FRONTEND_PUBLIC_URL: requireEnv('FRONTEND_PUBLIC_URL'),
     TOTP_ENCRYPTION_KEY: requireEnv('TOTP_ENCRYPTION_KEY'),
+    ASAAS_ENCRYPTION_KEY: requireEnv('ASAAS_ENCRYPTION_KEY'),
+    ASAAS_PLATFORM_API_KEY: process.env.ASAAS_PLATFORM_API_KEY || '',
+    ASAAS_PLATFORM_ENV: (process.env.ASAAS_PLATFORM_ENV || 'sandbox') as 'sandbox' | 'production',
   };
 }

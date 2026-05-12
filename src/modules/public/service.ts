@@ -2,6 +2,8 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { findOrCreateClientByPhone } from '../clients/service.js';
 import { createAppointment } from '../appointments/service.js';
+import { getConnectionByBusinessId } from '../integrations/service.js';
+import { createPayment } from '../asaas-payments/service.js';
 
 export async function getBusinessBySlug(slug: string) {
   const supabase = getSupabaseAdmin();
@@ -27,7 +29,7 @@ export async function getPublicServices(businessId: string) {
   const supabase = getSupabaseAdmin();
   const { data: categories } = await supabase
     .from('categories')
-    .select('id, name, color, services(id, name, description, price, price_type, duration_minutes, image_url, is_active)')
+    .select('id, name, color, services(id, name, description, price, price_type, duration_minutes, image_url, is_active, requires_payment, payment_type, deposit_amount)')
     .eq('business_id', businessId)
     .eq('is_active', true)
     .order('sort_order', { ascending: true });
@@ -196,7 +198,7 @@ export async function createPublicBooking(slug: string, input: {
     if (!collaboratorId) throw new ValidationError('Nenhum profissional disponivel neste horario.');
   }
 
-  return createAppointment(business.id, {
+  const appointment = await createAppointment(business.id, {
     client_id: client.id,
     collaborator_id: collaboratorId,
     date: input.date,
@@ -205,4 +207,55 @@ export async function createPublicBooking(slug: string, input: {
     notes: input.notes,
     source: 'public_page',
   });
+
+  // Check if any service requires payment and Asaas is connected
+  const supabasePayCheck = getSupabaseAdmin();
+  const { data: paymentServices } = await supabasePayCheck
+    .from('services')
+    .select('id, price, requires_payment, payment_type, deposit_amount')
+    .in('id', serviceIds)
+    .eq('requires_payment', true);
+
+  const requiresPayment = paymentServices && paymentServices.length > 0;
+  let paymentData = null;
+
+  if (requiresPayment) {
+    const connection = await getConnectionByBusinessId(business.id);
+    if (connection) {
+      const primaryService = paymentServices[0];
+      const paymentType = primaryService.payment_type || 'full_payment';
+
+      let chargeValue = Number(appointment.total_price) || 0;
+      if (paymentType === 'deposit' && primaryService.deposit_amount) {
+        chargeValue = Number(primaryService.deposit_amount);
+      }
+
+      if (chargeValue > 0 && paymentType !== 'manual') {
+        try {
+          paymentData = await createPayment(business.id, {
+            clientId: client.id,
+            appointmentId: appointment.id,
+            value: chargeValue,
+            dueDate: input.date,
+            billingType: 'UNDEFINED',
+          });
+        } catch {
+          // Payment creation failed — appointment still valid, payment can be retried
+        }
+      }
+    }
+  }
+
+  return {
+    ...appointment,
+    payment: paymentData ? {
+      id: paymentData.id,
+      status: paymentData.status,
+      value: paymentData.value,
+      billing_type: paymentData.billing_type,
+      invoice_url: paymentData.invoice_url,
+      pix_qr_code: paymentData.pix_qr_code,
+      pix_payload: paymentData.pix_payload,
+    } : null,
+  };
 }
