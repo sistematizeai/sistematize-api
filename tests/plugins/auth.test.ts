@@ -40,7 +40,7 @@ describe('authPlugin', () => {
 
   it('returns 200 with valid token', async () => {
     const token = jwt.sign(
-      { sub: 'user-123', role: 'owner', business_id: 'biz-456' },
+      { sub: 'user-123', role: 'owner', business_id: 'biz-456', iss: 'sistematize-api', aud: 'sistematize' },
       JWT_SECRET,
     );
     const res = await app.inject({

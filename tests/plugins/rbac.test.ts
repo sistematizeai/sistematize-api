@@ -29,7 +29,7 @@ describe('rbacPlugin', () => {
   afterAll(async () => { await app.close(); });
 
   function makeToken(role: string) {
-    return jwt.sign({ sub: 'u1', role, business_id: 'b1' }, JWT_SECRET);
+    return jwt.sign({ sub: 'u1', role, business_id: 'b1', iss: 'sistematize-api', aud: 'sistematize' }, JWT_SECRET);
   }
 
   it('allows master_admin to admin-only route', async () => {
