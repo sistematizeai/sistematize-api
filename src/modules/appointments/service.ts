@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
+import { sendAppointmentConfirmation, sendAppointmentCancellation } from '../notifications/service.js';
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   scheduled: ['confirmed', 'cancelled', 'no_show'],
@@ -198,6 +199,8 @@ export async function createAppointment(businessId: string, input: {
 
   if (aptErr) throw aptErr;
 
+  sendAppointmentConfirmation({ appointmentId: appointment.id, businessId }).catch(() => {});
+
   return appointment;
 }
 
@@ -335,5 +338,10 @@ export async function updateStatus(id: string, businessId: string, newStatus: st
     .single();
 
   if (error) throw error;
+
+  if (newStatus === 'cancelled') {
+    sendAppointmentCancellation({ appointmentId: id, businessId }).catch(() => {});
+  }
+
   return data;
 }

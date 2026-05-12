@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { processAsaasWebhook } from './service.js';
 import { processPlatformWebhook } from './platform-service.js';
 import { blockExpiredTrials } from '../businesses/service.js';
+import { sendPendingReminders, sendTrialNotifications } from '../notifications/service.js';
 
 export async function webhookRoutes(app: FastifyInstance) {
   app.post('/webhooks/asaas', {
@@ -65,6 +66,18 @@ export async function webhookRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: 'Nao autorizado' });
     }
     const result = await blockExpiredTrials();
+    const trialEmails = await sendTrialNotifications();
+    return reply.send({ ...result, trialEmails });
+  });
+
+  app.post('/cron/send-reminders', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const cronSecret = request.headers['x-cron-secret'] as string | undefined;
+    if (cronSecret !== process.env.CRON_SECRET && process.env.NODE_ENV === 'production') {
+      return reply.status(401).send({ error: 'Nao autorizado' });
+    }
+    const result = await sendPendingReminders();
     return reply.send(result);
   });
 }
