@@ -30,7 +30,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
       to: options.to,
       subject: options.subject,
       html: options.html,
-      replyTo: options.replyTo,
+      replyTo: options.replyTo || env.REPLY_TO_EMAIL || undefined,
     });
     return true;
   } catch (err) {

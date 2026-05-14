@@ -98,9 +98,14 @@ async function start() {
     app.log.info(`Server running on http://${env.HOST}:${env.PORT}`);
 
     // Warmup: wake Supabase connection to avoid cold-start latency on first request
-    getSupabaseAdmin().from('businesses').select('id', { count: 'exact', head: true }).limit(1)
-      .then(() => app.log.info('Supabase connection warmed up'))
-      .catch(() => app.log.warn('Supabase warmup failed — first requests may be slow'));
+    void (async () => {
+      try {
+        await getSupabaseAdmin().from('businesses').select('id', { count: 'exact', head: true }).limit(1);
+        app.log.info('Supabase connection warmed up');
+      } catch {
+        app.log.warn('Supabase warmup failed - first requests may be slow');
+      }
+    })();
     const shutdown = async (signal: string) => {
       app.log.info(`${signal} received, shutting down gracefully`);
       await app.close();

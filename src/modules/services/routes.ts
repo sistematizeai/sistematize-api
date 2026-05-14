@@ -1,33 +1,34 @@
 import type { FastifyInstance } from 'fastify';
 import { createServiceSchema, updateServiceSchema, serviceParamsSchema } from './schemas.js';
 import { listHandler, getHandler, createHandler, updateHandler, deleteHandler, uploadImageHandler } from './handlers.js';
+import { routeHandler } from '../../utils/route-handler.js';
 
 export async function serviceRoutes(app: FastifyInstance) {
   app.get('/api/services', {
     preHandler: [app.authenticate, app.requireBusinessId],
-  }, listHandler);
+  }, routeHandler(listHandler));
 
   app.get('/api/services/:id', {
     preHandler: [app.authenticate, app.requireBusinessId],
     schema: serviceParamsSchema,
-  }, getHandler);
+  }, routeHandler(getHandler));
 
   app.post('/api/services', {
     preHandler: [app.authenticate, app.requireRole(['owner']), app.requireBusinessId],
     schema: createServiceSchema,
-  }, createHandler);
+  }, routeHandler(createHandler));
 
   app.put('/api/services/:id', {
     preHandler: [app.authenticate, app.requireRole(['owner']), app.requireBusinessId],
     schema: updateServiceSchema,
-  }, updateHandler);
+  }, routeHandler(updateHandler));
 
   app.post('/api/services/:id/image', {
     preHandler: [app.authenticate, app.requireRole(['owner']), app.requireBusinessId],
-  }, uploadImageHandler);
+  }, routeHandler(uploadImageHandler));
 
   app.delete('/api/services/:id', {
     preHandler: [app.authenticate, app.requireRole(['owner']), app.requireBusinessId],
     schema: serviceParamsSchema,
-  }, deleteHandler);
+  }, routeHandler(deleteHandler));
 }

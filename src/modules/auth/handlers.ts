@@ -2,17 +2,27 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import * as authService from './service.js';
 
 export async function registerHandler(
-  request: FastifyRequest<{ Body: { full_name: string; email: string; password: string; document: string; business_name: string } }>,
+  request: FastifyRequest<{ Body: Record<string, unknown> }>,
   reply: FastifyReply,
 ) {
-  const result = await authService.registerUser(request.body);
-  await request.server.audit(request, {
-    action: 'create',
-    entity_type: 'profile',
-    entity_id: result.user.id,
-    new_data: { email: request.body.email, business_name: request.body.business_name },
-  });
+  const result = await authService.registerUser(request.body as unknown as Parameters<typeof authService.registerUser>[0]);
   return reply.status(201).send(result);
+}
+
+export async function resendConfirmationHandler(
+  request: FastifyRequest<{ Body: { email: string } }>,
+  reply: FastifyReply,
+) {
+  const result = await authService.resendConfirmation(request.body.email);
+  return reply.send(result);
+}
+
+export async function confirmEmailHandler(
+  request: FastifyRequest<{ Body: { token: string } }>,
+  reply: FastifyReply,
+) {
+  const result = await authService.confirmEmail(request.body.token);
+  return reply.send(result);
 }
 
 export async function loginHandler(

@@ -1,48 +1,49 @@
 import { FastifyInstance } from 'fastify';
 import * as handlers from './handlers.js';
 import * as schemas from './schemas.js';
+import { routeHandler } from '../../utils/route-handler.js';
 
 export async function businessRoutes(app: FastifyInstance) {
   app.get('/api/businesses/me', {
     preHandler: [app.authenticate],
-  }, handlers.getMyBusinessHandler);
+  }, routeHandler(handlers.getMyBusinessHandler));
 
   app.put('/api/businesses/me', {
     preHandler: [app.authenticate],
     schema: schemas.updateBusinessSchema,
-  }, handlers.updateMyBusinessHandler);
+  }, routeHandler(handlers.updateMyBusinessHandler));
 
   app.get('/api/businesses/stats', {
     preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
-  }, handlers.statsHandler);
+  }, routeHandler(handlers.statsHandler));
 
   app.get('/api/businesses', {
     preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
-  }, handlers.listHandler);
+  }, routeHandler(handlers.listHandler));
 
   app.get('/api/businesses/:id', {
     preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
-  }, handlers.getByIdHandler);
+  }, routeHandler(handlers.getByIdHandler));
 
   app.put('/api/businesses/:id', {
     preHandler: [app.authenticate, app.requireRole(['master_admin'])],
     schema: schemas.adminUpdateBusinessSchema,
-  }, handlers.adminUpdateHandler);
+  }, routeHandler(handlers.adminUpdateHandler));
 
   app.patch('/api/businesses/:id/status', {
     preHandler: [app.authenticate, app.requireRole(['master_admin'])],
     schema: schemas.updateStatusSchema,
-  }, handlers.updateStatusHandler);
+  }, routeHandler(handlers.updateStatusHandler));
 
   app.post('/api/businesses/me/logo', {
     preHandler: [app.authenticate],
-  }, handlers.uploadLogoHandler);
+  }, routeHandler(handlers.uploadLogoHandler));
 
   app.post('/api/businesses/me/cover', {
     preHandler: [app.authenticate],
-  }, handlers.uploadCoverHandler);
+  }, routeHandler(handlers.uploadCoverHandler));
 
   app.post('/api/businesses/block-expired', {
     preHandler: [app.authenticate, app.requireRole(['master_admin'])],
-  }, handlers.blockExpiredHandler);
+  }, routeHandler(handlers.blockExpiredHandler));
 }

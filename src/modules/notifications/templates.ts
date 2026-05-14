@@ -110,6 +110,20 @@ Para continuar usando todos os recursos, assine um plano.
   return baseLayout(content, { businessName: data.businessName, primaryColor: '#F59E0B' });
 }
 
+export function emailConfirmationTemplate(data: { userName: string; confirmUrl: string }) {
+  const content = `
+<div class="header"><h1>Confirme seu email</h1></div>
+<div class="body">
+<p style="font-size:15px;color:#1a1a1a;margin:0 0 16px">Ola <strong>${data.userName}</strong>,</p>
+<p style="font-size:14px;color:#555;line-height:1.6;margin:0 0 24px">
+Obrigado por se cadastrar no Sistematize! Para ativar sua conta e comecar a usar o sistema, confirme seu email clicando no botao abaixo.</p>
+<div style="text-align:center"><a href="${data.confirmUrl}" class="btn">Confirmar Email</a></div>
+<p style="font-size:12px;color:#8c8c8c;margin:24px 0 0;line-height:1.5">
+Se voce nao criou esta conta, ignore este email. O link expira em 24 horas.</p>
+</div>`;
+  return baseLayout(content, { businessName: 'Sistematize' });
+}
+
 export function trialExpiredTemplate(data: { businessName: string; ownerName: string; dashboardUrl: string }) {
   const content = `
 <div class="header" style="background:#EF4444"><h1>Seu trial expirou</h1></div>

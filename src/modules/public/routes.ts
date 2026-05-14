@@ -1,19 +1,20 @@
 import type { FastifyInstance } from 'fastify';
 import { slugParamsSchema, publicBookingSchema, clientDataRequestSchema, clientDataDeleteSchema } from './schemas.js';
 import { getBusinessHandler, getServicesHandler, getCombosHandler, getClientDataHandler, deleteClientDataHandler, createBookingHandler } from './handlers.js';
+import { routeHandler } from '../../utils/route-handler.js';
 
 export async function publicRoutes(app: FastifyInstance) {
   app.get('/api/public/:slug', {
     schema: slugParamsSchema,
-  }, getBusinessHandler);
+  }, routeHandler(getBusinessHandler));
 
   app.get('/api/public/:slug/services', {
     schema: slugParamsSchema,
-  }, getServicesHandler);
+  }, routeHandler(getServicesHandler));
 
   app.get('/api/public/:slug/combos', {
     schema: slugParamsSchema,
-  }, getCombosHandler);
+  }, routeHandler(getCombosHandler));
 
   app.post('/api/public/:slug/delete-data', {
     schema: clientDataDeleteSchema,
@@ -23,7 +24,7 @@ export async function publicRoutes(app: FastifyInstance) {
         timeWindow: '1 minute',
       },
     },
-  }, deleteClientDataHandler);
+  }, routeHandler(deleteClientDataHandler));
 
   app.post('/api/public/:slug/my-data', {
     schema: clientDataRequestSchema,
@@ -33,7 +34,7 @@ export async function publicRoutes(app: FastifyInstance) {
         timeWindow: '1 minute',
       },
     },
-  }, getClientDataHandler);
+  }, routeHandler(getClientDataHandler));
 
   app.post('/api/public/:slug/appointments', {
     schema: publicBookingSchema,
@@ -43,5 +44,5 @@ export async function publicRoutes(app: FastifyInstance) {
         timeWindow: '1 minute',
       },
     },
-  }, createBookingHandler);
+  }, routeHandler(createBookingHandler));
 }

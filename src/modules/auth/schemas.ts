@@ -1,7 +1,15 @@
 export const registerSchema = {
   body: {
     type: 'object',
-    required: ['full_name', 'email', 'password', 'document', 'business_name'],
+    required: [
+      'full_name', 'email', 'password', 'document',
+      'business_name', 'segment', 'business_type', 'city', 'state', 'whatsapp',
+      'professionals_count', 'monthly_appointments_range', 'current_scheduling_method',
+      'current_system_usage', 'main_difficulty',
+      'monthly_revenue_range', 'main_goal', 'whatsapp_automation_interest',
+      'public_booking_page_interest', 'digital_catalog_interest', 'best_contact_time',
+      'accepted_terms',
+    ],
     additionalProperties: false,
     properties: {
       full_name: { type: 'string', minLength: 2, maxLength: 100 },
@@ -9,6 +17,36 @@ export const registerSchema = {
       password: { type: 'string', minLength: 8, maxLength: 128, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).{8,}$' },
       document: { type: 'string', minLength: 11, maxLength: 18 },
       business_name: { type: 'string', minLength: 2, maxLength: 100 },
+      segment: { type: 'string', minLength: 1, maxLength: 100 },
+      business_type: { type: 'string', minLength: 1, maxLength: 100 },
+      city: { type: 'string', minLength: 1, maxLength: 100 },
+      state: { type: 'string', minLength: 2, maxLength: 2 },
+      whatsapp: { type: 'string', minLength: 10, maxLength: 20 },
+      instagram: { type: 'string', maxLength: 100, default: '' },
+      professionals_count: { type: 'string', minLength: 1 },
+      monthly_appointments_range: { type: 'string', minLength: 1 },
+      current_scheduling_method: { type: 'string', minLength: 1 },
+      current_system_usage: { type: 'string', minLength: 1 },
+      main_difficulty: { type: 'string', minLength: 1 },
+      monthly_revenue_range: { type: 'string', minLength: 1 },
+      main_goal: { type: 'string', minLength: 1 },
+      whatsapp_automation_interest: { type: 'string', minLength: 1 },
+      public_booking_page_interest: { type: 'string', minLength: 1 },
+      digital_catalog_interest: { type: 'string', minLength: 1 },
+      best_contact_time: { type: 'string', minLength: 1 },
+      accepted_terms: { type: 'boolean', enum: [true] },
+      accepted_marketing: { type: 'boolean', default: false },
+    },
+  },
+} as const;
+
+export const resendConfirmationSchema = {
+  body: {
+    type: 'object',
+    required: ['email'],
+    additionalProperties: false,
+    properties: {
+      email: { type: 'string', format: 'email' },
     },
   },
 } as const;
@@ -44,6 +82,17 @@ export const confirm2FASchema = {
     additionalProperties: false,
     properties: {
       totp_code: { type: 'string', minLength: 6, maxLength: 6 },
+    },
+  },
+} as const;
+
+export const confirmEmailSchema = {
+  body: {
+    type: 'object',
+    required: ['token'],
+    additionalProperties: false,
+    properties: {
+      token: { type: 'string' },
     },
   },
 } as const;

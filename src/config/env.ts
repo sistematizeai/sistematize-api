@@ -14,6 +14,7 @@ export interface Env {
   ASAAS_PLATFORM_ENV: 'sandbox' | 'production';
   RESEND_API_KEY: string;
   FROM_EMAIL: string;
+  REPLY_TO_EMAIL: string;
 }
 
 function requireEnv(name: string): string {
@@ -41,5 +42,6 @@ export function loadEnv(): Env {
     ASAAS_PLATFORM_ENV: (process.env.ASAAS_PLATFORM_ENV || 'sandbox') as 'sandbox' | 'production',
     RESEND_API_KEY: process.env.RESEND_API_KEY || '',
     FROM_EMAIL: process.env.FROM_EMAIL || 'Sistematize <noreply@sistematize.com>',
+    REPLY_TO_EMAIL: process.env.REPLY_TO_EMAIL || '',
   };
 }

@@ -1,9 +1,11 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import type { WebSocketLikeConstructor } from '@supabase/realtime-js';
 import ws from 'ws';
 import { loadEnv } from './env.js';
 
 let supabaseAdmin: SupabaseClient | null = null;
 let supabaseAuth: SupabaseClient | null = null;
+const webSocketTransport = ws as unknown as WebSocketLikeConstructor;
 
 export function getSupabaseAdmin(): SupabaseClient {
   if (!supabaseAdmin) {
@@ -14,7 +16,7 @@ export function getSupabaseAdmin(): SupabaseClient {
         persistSession: false,
       },
       realtime: {
-        transport: ws,
+        transport: webSocketTransport,
       },
     });
   }
@@ -31,7 +33,7 @@ export function getSupabaseAuth(): SupabaseClient {
         persistSession: false,
       },
       realtime: {
-        transport: ws,
+        transport: webSocketTransport,
       },
     });
   }

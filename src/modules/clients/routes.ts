@@ -1,30 +1,31 @@
 import type { FastifyInstance } from 'fastify';
 import { createClientSchema, updateClientSchema, clientParamsSchema, listClientsQuerySchema } from './schemas.js';
 import { listHandler, getHandler, createHandler, updateHandler, deleteHandler } from './handlers.js';
+import { routeHandler } from '../../utils/route-handler.js';
 
 export async function clientRoutes(app: FastifyInstance) {
   app.get('/api/clients', {
     preHandler: [app.authenticate, app.requireBusinessId],
     schema: listClientsQuerySchema,
-  }, listHandler);
+  }, routeHandler(listHandler));
 
   app.get('/api/clients/:id', {
     preHandler: [app.authenticate, app.requireBusinessId],
     schema: clientParamsSchema,
-  }, getHandler);
+  }, routeHandler(getHandler));
 
   app.post('/api/clients', {
     preHandler: [app.authenticate, app.requireBusinessId],
     schema: createClientSchema,
-  }, createHandler);
+  }, routeHandler(createHandler));
 
   app.put('/api/clients/:id', {
     preHandler: [app.authenticate, app.requireRole(['owner']), app.requireBusinessId],
     schema: updateClientSchema,
-  }, updateHandler);
+  }, routeHandler(updateHandler));
 
   app.delete('/api/clients/:id', {
     preHandler: [app.authenticate, app.requireRole(['owner']), app.requireBusinessId],
     schema: clientParamsSchema,
-  }, deleteHandler);
+  }, routeHandler(deleteHandler));
 }

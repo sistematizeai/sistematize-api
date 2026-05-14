@@ -5,6 +5,17 @@ import { createAppointment } from '../appointments/service.js';
 import { getConnectionByBusinessId } from '../integrations/service.js';
 import { createPayment } from '../asaas-payments/service.js';
 
+type CollaboratorServiceRow = {
+  collaborator_id: string;
+  service_id: string;
+  collaborator: {
+    id: string;
+    is_active: boolean;
+    work_start: string | null;
+    work_end: string | null;
+  } | null;
+};
+
 export async function getBusinessBySlug(slug: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
@@ -252,8 +263,9 @@ export async function createPublicBooking(slug: string, input: {
       .in('service_id', serviceIds)
       .eq('business_id', business.id);
 
-    const collabMap = new Map<string, { collaborator: any; serviceCount: number }>();
-    for (const cs of (allCollabSvcs || [])) {
+    const collabMap = new Map<string, { collaborator: NonNullable<CollaboratorServiceRow['collaborator']>; serviceCount: number }>();
+    const collaboratorServices = (allCollabSvcs || []) as unknown as CollaboratorServiceRow[];
+    for (const cs of collaboratorServices) {
       if (!cs.collaborator?.is_active) continue;
       const existing = collabMap.get(cs.collaborator_id);
       if (existing) {

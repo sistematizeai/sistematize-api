@@ -3,6 +3,8 @@ import { validateDocument } from '../../utils/document.js';
 import { generateSlug } from '../../utils/slug.js';
 import { generateTOTPSecret, verifyTOTPToken, generateQRCodeURL, encryptSecret } from '../../utils/totp.js';
 import { AppError, ConflictError, UnauthorizedError, ValidationError } from '../../utils/errors.js';
+import { sendEmail } from '../../utils/email.js';
+import { emailConfirmationTemplate } from '../notifications/templates.js';
 import jwt from 'jsonwebtoken';
 import { loadEnv } from '../../config/env.js';
 import QRCode from 'qrcode';
@@ -13,6 +15,25 @@ interface RegisterInput {
   password: string;
   document: string;
   business_name: string;
+  segment: string;
+  business_type: string;
+  city: string;
+  state: string;
+  whatsapp: string;
+  instagram?: string;
+  professionals_count: string;
+  monthly_appointments_range: string;
+  current_scheduling_method: string;
+  current_system_usage: string;
+  main_difficulty: string;
+  monthly_revenue_range: string;
+  main_goal: string;
+  whatsapp_automation_interest: string;
+  public_booking_page_interest: string;
+  digital_catalog_interest: string;
+  best_contact_time: string;
+  accepted_terms: boolean;
+  accepted_marketing?: boolean;
 }
 
 interface CompleteRegistrationInput {
@@ -30,6 +51,7 @@ function signJWT(payload: { sub: string; role: string; business_id: string | nul
 
 export async function registerUser(input: RegisterInput) {
   const supabase = getSupabaseAdmin();
+  const env = loadEnv();
 
   const docResult = validateDocument(input.document);
   if (!docResult.valid || !docResult.type) {
@@ -49,7 +71,7 @@ export async function registerUser(input: RegisterInput) {
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email: input.email,
     password: input.password,
-    email_confirm: true,
+    email_confirm: false,
   });
 
   if (authError || !authData.user) {
@@ -87,6 +109,7 @@ export async function registerUser(input: RegisterInput) {
     document_type: docResult.type,
     role: 'owner',
     business_id: null,
+    onboarding_completed: false,
   });
 
   if (profileError) {
@@ -103,6 +126,12 @@ export async function registerUser(input: RegisterInput) {
       plan_id: basicPlan?.id || null,
       subscription_status: 'trial',
       trial_ends_at: trialEndsAt.toISOString(),
+      segment: input.segment,
+      business_type: input.business_type,
+      city: input.city,
+      state: input.state,
+      whatsapp: input.whatsapp,
+      instagram: input.instagram || '',
     })
     .select('id')
     .single();
@@ -122,14 +151,103 @@ export async function registerUser(input: RegisterInput) {
     throw new AppError(500, 'Erro ao vincular perfil ao negocio');
   }
 
-  const token = signJWT({
-    sub: userId,
-    role: 'owner',
+  await supabase.from('onboarding_answers').insert({
+    user_id: userId,
     business_id: business.id,
-    email: input.email,
+    professionals_count: input.professionals_count,
+    monthly_appointments_range: input.monthly_appointments_range,
+    current_scheduling_method: input.current_scheduling_method,
+    current_system_usage: input.current_system_usage,
+    main_difficulty: input.main_difficulty,
+    monthly_revenue_range: input.monthly_revenue_range,
+    main_goal: input.main_goal,
+    whatsapp_automation_interest: input.whatsapp_automation_interest,
+    public_booking_page_interest: input.public_booking_page_interest,
+    digital_catalog_interest: input.digital_catalog_interest,
+    best_contact_time: input.best_contact_time,
+    accepted_terms: input.accepted_terms,
+    accepted_marketing: input.accepted_marketing || false,
   });
 
-  return { token, user: { id: userId, role: 'owner', business_id: business.id } };
+  const confirmToken = jwt.sign(
+    { sub: userId, purpose: 'email_confirm', email: input.email },
+    env.SUPABASE_JWT_SECRET,
+    { expiresIn: '24h' },
+  );
+
+  const confirmUrl = `${env.FRONTEND_DASHBOARD_URL}/auth/callback?token=${confirmToken}`;
+
+  await sendEmail({
+    to: input.email,
+    subject: 'Confirme seu email — Sistematize',
+    html: emailConfirmationTemplate({ userName: input.full_name, confirmUrl }),
+  });
+
+  return { success: true, email: input.email };
+}
+
+export async function resendConfirmation(email: string) {
+  const supabase = getSupabaseAdmin();
+  const env = loadEnv();
+
+  const { data: { users }, error } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+  if (error) return { success: true };
+
+  const user = users.find(u => u.email === email);
+  if (!user || user.email_confirmed_at) {
+    return { success: true };
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('full_name')
+    .eq('id', user.id)
+    .single();
+
+  const confirmToken = jwt.sign(
+    { sub: user.id, purpose: 'email_confirm', email },
+    env.SUPABASE_JWT_SECRET,
+    { expiresIn: '24h' },
+  );
+
+  const confirmUrl = `${env.FRONTEND_DASHBOARD_URL}/auth/callback?token=${confirmToken}`;
+
+  await sendEmail({
+    to: email,
+    subject: 'Confirme seu email — Sistematize',
+    html: emailConfirmationTemplate({
+      userName: profile?.full_name || 'Usuario',
+      confirmUrl,
+    }),
+  });
+
+  return { success: true };
+}
+
+export async function confirmEmail(token: string) {
+  const env = loadEnv();
+  const supabase = getSupabaseAdmin();
+
+  let decoded: { sub: string; purpose: string; email: string };
+  try {
+    decoded = jwt.verify(token, env.SUPABASE_JWT_SECRET) as typeof decoded;
+  } catch {
+    throw new UnauthorizedError('Token invalido ou expirado');
+  }
+
+  if (decoded.purpose !== 'email_confirm') {
+    throw new UnauthorizedError('Token invalido');
+  }
+
+  const { error } = await supabase.auth.admin.updateUserById(decoded.sub, {
+    email_confirm: true,
+  });
+
+  if (error) {
+    throw new AppError(500, 'Erro ao confirmar email');
+  }
+
+  return { confirmed: true, email: decoded.email };
 }
 
 export async function loginUser(email: string, password: string) {
@@ -138,8 +256,19 @@ export async function loginUser(email: string, password: string) {
 
   const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
 
-  if (error || !data.user) {
+  if (error) {
+    if (error.message === 'Email not confirmed') {
+      throw new UnauthorizedError('EMAIL_NOT_CONFIRMED');
+    }
     throw new UnauthorizedError('Email ou senha incorretos');
+  }
+
+  if (!data.user) {
+    throw new UnauthorizedError('Email ou senha incorretos');
+  }
+
+  if (!data.user.email_confirmed_at) {
+    throw new UnauthorizedError('EMAIL_NOT_CONFIRMED');
   }
 
   const { data: profile } = await supabase
