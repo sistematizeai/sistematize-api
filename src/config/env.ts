@@ -12,6 +12,7 @@ export interface Env {
   ASAAS_ENCRYPTION_KEY: string;
   ASAAS_PLATFORM_API_KEY: string;
   ASAAS_PLATFORM_ENV: 'sandbox' | 'production';
+  ASAAS_PLATFORM_WALLET_ID: string;
   RESEND_API_KEY: string;
   FROM_EMAIL: string;
   REPLY_TO_EMAIL: string;
@@ -40,6 +41,7 @@ export function loadEnv(): Env {
     ASAAS_ENCRYPTION_KEY: requireEnv('ASAAS_ENCRYPTION_KEY'),
     ASAAS_PLATFORM_API_KEY: process.env.ASAAS_PLATFORM_API_KEY || '',
     ASAAS_PLATFORM_ENV: (process.env.ASAAS_PLATFORM_ENV || 'sandbox') as 'sandbox' | 'production',
+    ASAAS_PLATFORM_WALLET_ID: process.env.ASAAS_PLATFORM_WALLET_ID || '',
     RESEND_API_KEY: process.env.RESEND_API_KEY || '',
     FROM_EMAIL: process.env.FROM_EMAIL || 'Sistematize <noreply@sistematize.com>',
     REPLY_TO_EMAIL: process.env.REPLY_TO_EMAIL || '',
