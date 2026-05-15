@@ -15,6 +15,21 @@ interface AsaasRequestOptions {
   body?: unknown;
 }
 
+interface AsaasAccount {
+  id: string;
+  name: string;
+  walletId?: string | null;
+}
+
+interface AsaasWalletResponse {
+  walletId?: string | null;
+  id?: string | null;
+  data?: Array<{
+    walletId?: string | null;
+    id?: string | null;
+  }>;
+}
+
 export async function asaasRequest<T = unknown>({
   apiKey,
   environment,
@@ -44,9 +59,29 @@ export async function asaasRequest<T = unknown>({
 }
 
 export async function validateAsaasApiKey(apiKey: string, environment: AsaasEnvironment) {
-  return asaasRequest<{ id: string; name: string; walletId: string }>({
+  const account = await asaasRequest<AsaasAccount>({
     apiKey,
     environment,
     path: '/myAccount',
   });
+
+  if (account.walletId) {
+    return account;
+  }
+
+  return {
+    ...account,
+    walletId: await retrieveAsaasWalletId(apiKey, environment),
+  };
+}
+
+export async function retrieveAsaasWalletId(apiKey: string, environment: AsaasEnvironment): Promise<string | null> {
+  const wallet = await asaasRequest<AsaasWalletResponse>({
+    apiKey,
+    environment,
+    path: '/wallets/',
+  });
+
+  const firstWallet = wallet.data?.find((entry) => entry.walletId || entry.id);
+  return wallet.walletId || wallet.id || firstWallet?.walletId || firstWallet?.id || null;
 }
