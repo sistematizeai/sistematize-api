@@ -41,6 +41,20 @@ describe('asaas-client', () => {
     expect(String(fetchMock.mock.calls[1][0])).toBe('https://api.asaas.com/v3/wallets/');
   });
 
+  it('recovers walletId from wallets endpoint id field returned by Asaas', async () => {
+    vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(await okResponse({ id: 'acc_123', name: 'Conta Asaas' }))
+      .mockResolvedValueOnce(await okResponse({ data: [{ object: 'wallet', id: 'wallet-id-field' }] }));
+
+    const { validateAsaasApiKey } = await import('../../src/utils/asaas-client.js');
+
+    await expect(validateAsaasApiKey('api-key', 'production')).resolves.toMatchObject({
+      id: 'acc_123',
+      walletId: 'wallet-id-field',
+    });
+  });
+
   it('keeps walletId null when Asaas does not expose a wallet for the key', async () => {
     vi
       .spyOn(globalThis, 'fetch')
