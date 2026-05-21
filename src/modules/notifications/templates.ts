@@ -118,6 +118,10 @@ export function emailConfirmationTemplate(data: { userName: string; confirmUrl: 
 <p style="font-size:14px;color:#555;line-height:1.6;margin:0 0 24px">
 Obrigado por se cadastrar no Sistematize! Para ativar sua conta e comecar a usar o sistema, confirme seu email clicando no botao abaixo.</p>
 <div style="text-align:center"><a href="${data.confirmUrl}" class="btn">Confirmar Email</a></div>
+<div style="background:#fafafa;border-radius:10px;padding:14px 18px;margin:24px 0 0;font-size:12px;color:#555;line-height:1.6">
+Este email foi enviado pela Sistematize. Enquanto configuramos um dominio proprio, o remetente tecnico pode aparecer como <strong>onboarding@resend.dev</strong>.
+Para suporte, responda este email ou fale com <strong>sistematizeai@gmail.com</strong>.
+</div>
 <p style="font-size:12px;color:#8c8c8c;margin:24px 0 0;line-height:1.5">
 Se voce nao criou esta conta, ignore este email. O link expira em 24 horas.</p>
 </div>`;

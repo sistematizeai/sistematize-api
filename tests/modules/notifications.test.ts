@@ -136,6 +136,19 @@ describe('Notification Templates', () => {
     });
     expect(html).toContain('#FF6600');
   });
+
+  it('emailConfirmationTemplate explains temporary Resend sender and support email', async () => {
+    const { emailConfirmationTemplate } = await import('../../src/modules/notifications/templates.js');
+    const html = emailConfirmationTemplate({
+      userName: 'Filipe',
+      confirmUrl: 'https://sistematize-dashboard.vercel.app/auth/callback?token=abc',
+    });
+
+    expect(html).toContain('Confirmar Email');
+    expect(html).toContain('onboarding@resend.dev');
+    expect(html).toContain('sistematizeai@gmail.com');
+    expect(html).toContain('https://sistematize-dashboard.vercel.app/auth/callback?token=abc');
+  });
 });
 
 describe('Email Utility', () => {
