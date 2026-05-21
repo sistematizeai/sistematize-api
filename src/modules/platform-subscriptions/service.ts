@@ -6,6 +6,17 @@ import { NotFoundError, AppError } from '../../utils/errors.js';
 type BillingCycle = 'monthly' | 'yearly';
 type AsaasBillingType = 'PIX' | 'BOLETO' | 'CREDIT_CARD' | 'UNDEFINED';
 
+type AsaasSubscriptionPayment = {
+  id: string;
+  status?: string;
+  value?: number;
+  netValue?: number | null;
+  dueDate?: string;
+  invoiceUrl?: string | null;
+  bankSlipUrl?: string | null;
+  billingType?: string | null;
+};
+
 type PlanLimits = {
   max_collaborators?: number | null;
   max_services?: number | null;
@@ -70,6 +81,10 @@ function validateSubscriptionValue(value: number) {
   if (!Number.isFinite(Number(value)) || Number(value) <= 0) {
     throw new AppError(422, 'Valor do plano invalido para cobranca da plataforma.', 'INVALID_PLAN_VALUE');
   }
+}
+
+export function getAsaasPaymentUrl(payment: Pick<AsaasSubscriptionPayment, 'invoiceUrl' | 'bankSlipUrl'> | null | undefined) {
+  return payment?.invoiceUrl || payment?.bankSlipUrl || null;
 }
 
 export function assertPlanCoversUsageSnapshot(plan: PlanLimits, usage: UsageSnapshot) {
@@ -199,6 +214,14 @@ export async function createSubscription(businessId: string, planId: string, bil
     },
   });
 
+  const paymentList = await asaasRequest<{ data?: AsaasSubscriptionPayment[] }>({
+    apiKey,
+    environment,
+    path: `/subscriptions/${sub.id}/payments?limit=1`,
+  });
+  const firstPayment = paymentList.data?.[0] || null;
+  const paymentUrl = getAsaasPaymentUrl(firstPayment);
+
   const { data: record, error: insertError } = await supabase
     .from('platform_subscriptions')
     .insert({
@@ -215,12 +238,26 @@ export async function createSubscription(businessId: string, planId: string, bil
 
   if (insertError) throw insertError;
 
+  if (firstPayment?.id) {
+    await supabase.from('platform_invoices').upsert({
+      business_id: businessId,
+      subscription_id: record.id,
+      asaas_payment_id: firstPayment.id,
+      value: firstPayment.value || value,
+      net_value: firstPayment.netValue || null,
+      status: firstPayment.status || 'pending',
+      due_date: firstPayment.dueDate || dueDateStr,
+      invoice_url: firstPayment.invoiceUrl || null,
+      bank_slip_url: firstPayment.bankSlipUrl || null,
+    }, { onConflict: 'asaas_payment_id' });
+  }
+
   await supabase
     .from('businesses')
     .update({ plan_id: planId, subscription_status: 'active' })
     .eq('id', businessId);
 
-  return { subscription: record, plan };
+  return { subscription: record, plan, payment_url: paymentUrl, payment: firstPayment };
 }
 
 export async function getActiveSubscription(businessId: string) {

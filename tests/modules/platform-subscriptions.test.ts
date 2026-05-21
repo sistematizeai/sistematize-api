@@ -7,6 +7,25 @@ describe('Platform subscriptions hardening', () => {
     expect(typeof service.createSubscription).toBe('function');
     expect(typeof service.upgradeSubscription).toBe('function');
     expect(typeof service.cancelSubscription).toBe('function');
+    expect(typeof service.getAsaasPaymentUrl).toBe('function');
+  });
+
+  it('prefers the Asaas invoice URL as the hosted payment URL', async () => {
+    const { getAsaasPaymentUrl } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(getAsaasPaymentUrl({
+      invoiceUrl: 'https://sandbox.asaas.com/i/pay_123',
+      bankSlipUrl: 'https://sandbox.asaas.com/b/pdf_123',
+    })).toBe('https://sandbox.asaas.com/i/pay_123');
+  });
+
+  it('falls back to the bank slip URL when invoice URL is unavailable', async () => {
+    const { getAsaasPaymentUrl } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(getAsaasPaymentUrl({
+      invoiceUrl: null,
+      bankSlipUrl: 'https://sandbox.asaas.com/b/pdf_123',
+    })).toBe('https://sandbox.asaas.com/b/pdf_123');
   });
 
   it('rejects a plan that does not cover the current business usage', async () => {
