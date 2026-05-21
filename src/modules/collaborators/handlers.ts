@@ -18,7 +18,7 @@ export async function createHandler(
   request: FastifyRequest<{ Body: { name: string; phone?: string; email?: string; cpf?: string; birth_date?: string; address?: string; base_commission?: number; work_start?: string; work_end?: string; notes?: string; is_active?: boolean } }>,
   reply: FastifyReply
 ) {
-  const collaborator = await collabService.createCollaborator(request.user.business_id!, request.body);
+  const collaborator = await collabService.createCollaborator(request.user.business_id!, request.body, request.user.sub);
   await request.server.audit(request, {
     action: 'create',
     entity_type: 'collaborator',

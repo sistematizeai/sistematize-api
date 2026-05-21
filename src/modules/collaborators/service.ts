@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
+import { assertCanCreateCollaborator } from '../modules/access-control.js';
 
 export async function listCollaborators(businessId: string) {
   const supabase = getSupabaseAdmin();
@@ -41,8 +42,10 @@ export async function createCollaborator(businessId: string, input: {
   work_end?: string;
   notes?: string;
   is_active?: boolean;
-}) {
+}, profileId?: string) {
   const supabase = getSupabaseAdmin();
+  await assertCanCreateCollaborator(businessId, profileId);
+
   const { data, error } = await supabase
     .from('collaborators')
     .insert({ business_id: businessId, ...input })

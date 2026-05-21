@@ -31,6 +31,29 @@ export const publicBookingSchema = {
   },
 } as const;
 
+export const availabilityQuerySchema = {
+  querystring: {
+    type: 'object',
+    required: ['date'],
+    additionalProperties: false,
+    anyOf: [
+      { required: ['service_id'] },
+      { required: ['combo_id'] },
+    ],
+    properties: {
+      service_id: { type: 'string', format: 'uuid' },
+      combo_id: { type: 'string', format: 'uuid' },
+      collaborator_id: { type: 'string', format: 'uuid' },
+      date: { type: 'string', format: 'date' },
+    },
+  },
+  params: {
+    type: 'object',
+    required: ['slug'],
+    properties: { slug: { type: 'string', minLength: 1, maxLength: 100 } },
+  },
+} as const;
+
 export const clientDataDeleteSchema = {
   body: {
     type: 'object',

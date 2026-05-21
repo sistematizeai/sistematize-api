@@ -11,10 +11,22 @@ export async function profileRoutes(app: FastifyInstance) {
   }, routeHandler(handlers.updateMeHandler));
 
   app.get('/api/profiles', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('users.read')],
   }, routeHandler(handlers.listHandler));
+  app.post('/api/profiles/internal', {
+    preHandler: [app.authenticate, app.requirePermission('users.write'), app.requireSensitiveConfirmation],
+    schema: schemas.createInternalUserSchema,
+  }, routeHandler(handlers.createInternalUserHandler));
+  app.get('/api/profiles/:id/detail', {
+    preHandler: [app.authenticate, app.requirePermission('users.read')],
+    schema: schemas.profileParamsSchema,
+  }, routeHandler(handlers.getDetailHandler));
   app.put('/api/profiles/:id', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('users.write'), app.requireSensitiveConfirmation],
     schema: schemas.adminUpdateProfileSchema,
   }, routeHandler(handlers.adminUpdateHandler));
+  app.patch('/api/profiles/:id/status', {
+    preHandler: [app.authenticate, app.requirePermission('users.write'), app.requireSensitiveConfirmation],
+    schema: schemas.updateProfileStatusSchema,
+  }, routeHandler(handlers.updateStatusHandler));
 }

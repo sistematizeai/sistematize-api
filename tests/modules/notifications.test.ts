@@ -145,3 +145,34 @@ describe('Email Utility', () => {
     expect(typeof email.isEmailConfigured).toBe('function');
   });
 });
+
+describe('Notification Service', () => {
+  it('builds public business URLs from configured public frontend URL', async () => {
+    const service = await import('../../src/modules/notifications/service.js');
+    expect(service.buildPublicBusinessUrl('https://public.example.com/', 'salao-top')).toBe('https://public.example.com/salao-top');
+    expect(service.buildPublicBusinessUrl('https://public.example.com/base', 'salao-top')).toBe('https://public.example.com/base/salao-top');
+  });
+
+  it('builds notification delivery log payloads consistently', async () => {
+    const service = await import('../../src/modules/notifications/service.js');
+    expect(service.buildNotificationDeliveryLog({
+      businessId: 'biz-1',
+      appointmentId: 'apt-1',
+      channel: 'email',
+      type: 'appointment_reminder',
+      recipient: 'cliente@example.com',
+      status: 'sent',
+      provider: 'resend',
+    })).toEqual({
+      business_id: 'biz-1',
+      appointment_id: 'apt-1',
+      channel: 'email',
+      type: 'appointment_reminder',
+      recipient: 'cliente@example.com',
+      status: 'sent',
+      provider: 'resend',
+      error_message: null,
+      metadata: {},
+    });
+  });
+});

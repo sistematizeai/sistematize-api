@@ -6,7 +6,7 @@ export async function createCustomerHandler(
   reply: FastifyReply,
 ) {
   const businessId = request.user.business_id!;
-  const asaasCustomerId = await paymentService.ensureAsaasCustomer(businessId, request.body.clientId);
+  const asaasCustomerId = await paymentService.ensureAsaasCustomer(businessId, request.body.clientId, request.user.sub);
 
   await request.server.audit(request, {
     action: 'asaas.customer_created',
@@ -31,7 +31,7 @@ export async function createPaymentHandler(
   reply: FastifyReply,
 ) {
   const businessId = request.user.business_id!;
-  const payment = await paymentService.createPayment(businessId, request.body);
+  const payment = await paymentService.createPayment(businessId, request.body, request.user.sub);
 
   await request.server.audit(request, {
     action: 'payment.created',

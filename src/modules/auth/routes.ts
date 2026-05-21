@@ -22,7 +22,7 @@ export async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/resend-confirmation', { schema: schemas.resendConfirmationSchema, ...resendRateLimit }, routeHandler(handlers.resendConfirmationHandler));
   app.post('/api/auth/confirm-email', { schema: schemas.confirmEmailSchema, ...authRateLimit }, routeHandler(handlers.confirmEmailHandler));
 
-  app.post('/api/auth/logout', { preHandler: [app.authenticate] }, routeHandler(handlers.logoutHandler));
+  app.post('/api/auth/logout', routeHandler(handlers.logoutHandler));
   app.post('/api/auth/refresh', { preHandler: [app.authenticate] }, routeHandler(handlers.refreshHandler));
   app.post('/api/auth/2fa/setup', { preHandler: [app.authenticate] }, routeHandler(handlers.setup2FAHandler));
   app.post('/api/auth/2fa/confirm', {

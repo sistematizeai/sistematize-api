@@ -6,6 +6,18 @@ import { NotFoundError, AppError } from '../../utils/errors.js';
 type BillingCycle = 'monthly' | 'yearly';
 type AsaasBillingType = 'PIX' | 'BOLETO' | 'CREDIT_CARD' | 'UNDEFINED';
 
+type PlanLimits = {
+  max_collaborators?: number | null;
+  max_services?: number | null;
+  max_appointments_month?: number | null;
+};
+
+type UsageSnapshot = {
+  collaborators: number;
+  services: number;
+  appointmentsThisMonth: number;
+};
+
 function getPlatformAsaas() {
   const env = loadEnv();
   if (!env.ASAAS_PLATFORM_API_KEY) {
@@ -54,6 +66,90 @@ async function ensurePlatformCustomer(businessId: string): Promise<string> {
   return customer.id;
 }
 
+function validateSubscriptionValue(value: number) {
+  if (!Number.isFinite(Number(value)) || Number(value) <= 0) {
+    throw new AppError(422, 'Valor do plano invalido para cobranca da plataforma.', 'INVALID_PLAN_VALUE');
+  }
+}
+
+export function assertPlanCoversUsageSnapshot(plan: PlanLimits, usage: UsageSnapshot) {
+  const violations = [
+    {
+      label: 'colaboradores',
+      current: usage.collaborators,
+      max: plan.max_collaborators,
+    },
+    {
+      label: 'servicos',
+      current: usage.services,
+      max: plan.max_services,
+    },
+    {
+      label: 'agendamentos no mes',
+      current: usage.appointmentsThisMonth,
+      max: plan.max_appointments_month,
+    },
+  ].filter(item => item.max != null && item.current > Number(item.max));
+
+  if (violations.length > 0) {
+    const details = violations
+      .map(item => `${item.label}: uso ${item.current}, limite ${item.max}`)
+      .join('; ');
+    throw new AppError(
+      422,
+      `Plano selecionado nao cobre o uso atual (${details}). Reduza o uso ou escolha um plano maior.`,
+      'PLAN_LIMIT_EXCEEDED',
+    );
+  }
+
+  return { allowed: true };
+}
+
+async function getBusinessUsageSnapshot(businessId: string): Promise<UsageSnapshot> {
+  const supabase = getSupabaseAdmin();
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().split('T')[0];
+  const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().split('T')[0];
+
+  const [
+    collaborators,
+    services,
+    appointments,
+  ] = await Promise.all([
+    supabase
+      .from('collaborators')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', businessId)
+      .eq('is_active', true),
+    supabase
+      .from('services')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', businessId)
+      .eq('is_active', true),
+    supabase
+      .from('appointments')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', businessId)
+      .gte('date', monthStart)
+      .lt('date', nextMonthStart),
+  ]);
+
+  if (collaborators.error) throw collaborators.error;
+  if (services.error) throw services.error;
+  if (appointments.error) throw appointments.error;
+
+  return {
+    collaborators: collaborators.count || 0,
+    services: services.count || 0,
+    appointmentsThisMonth: appointments.count || 0,
+  };
+}
+
+async function assertPlanCoversCurrentBusinessUsage(businessId: string, plan: PlanLimits) {
+  const usage = await getBusinessUsageSnapshot(businessId);
+  return assertPlanCoversUsageSnapshot(plan, usage);
+}
+
 export async function createSubscription(businessId: string, planId: string, billingCycle: BillingCycle, billingType: AsaasBillingType = 'UNDEFINED') {
   const supabase = getSupabaseAdmin();
 
@@ -71,8 +167,11 @@ export async function createSubscription(businessId: string, planId: string, bil
 
   if (planError || !plan) throw new NotFoundError('Plano nao encontrado ou inativo.');
 
-  const customerId = await ensurePlatformCustomer(businessId);
   const value = billingCycle === 'yearly' ? plan.price_yearly : plan.price_monthly;
+  validateSubscriptionValue(value);
+  await assertPlanCoversCurrentBusinessUsage(businessId, plan);
+
+  const customerId = await ensurePlatformCustomer(businessId);
   const cycle = billingCycle === 'yearly' ? 'YEARLY' : 'MONTHLY';
 
   const nextDueDate = new Date();
@@ -154,6 +253,9 @@ export async function upgradeSubscription(businessId: string, newPlanId: string,
 
   const billingCycle = newBillingCycle || current.billing_cycle;
   const newValue = billingCycle === 'yearly' ? newPlan.price_yearly : newPlan.price_monthly;
+  validateSubscriptionValue(newValue);
+  await assertPlanCoversCurrentBusinessUsage(businessId, newPlan);
+
   const cycle = billingCycle === 'yearly' ? 'YEARLY' : 'MONTHLY';
 
   const { apiKey, environment } = getPlatformAsaas();
@@ -176,7 +278,7 @@ export async function upgradeSubscription(businessId: string, newPlanId: string,
 
   await supabase
     .from('businesses')
-    .update({ plan_id: newPlanId })
+    .update({ plan_id: newPlanId, subscription_status: 'active' })
     .eq('id', businessId);
 
   return { success: true, plan: newPlan, value: newValue, billing_cycle: billingCycle };
@@ -248,7 +350,7 @@ export async function adminListSubscriptions(filters: { status?: string; page?: 
 
   let query = supabase
     .from('platform_subscriptions')
-    .select('*, plan:plans(id, name, price_monthly, price_yearly), business:businesses(id, name, slug)', { count: 'exact' })
+    .select('*, plan:plans(id, name, price_monthly, price_yearly), business:businesses(id, name, slug, subscription_status)', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 

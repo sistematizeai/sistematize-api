@@ -3,6 +3,36 @@ import { NotFoundError } from '../../utils/errors.js';
 
 const SELECT_FIELDS = '*';
 
+type ModuleRef = {
+  id: string;
+  name: string;
+  slug: string;
+};
+
+type UserModuleOverride = {
+  is_active: boolean;
+  module: ModuleRef | null;
+};
+
+export function buildAvailableModules(planModules: ModuleRef[], userOverrides: UserModuleOverride[]) {
+  const available = new Map<string, ModuleRef & { source: 'plan' | 'override' }>();
+
+  for (const module of planModules) {
+    available.set(module.slug, { ...module, source: 'plan' });
+  }
+
+  for (const override of userOverrides) {
+    if (!override.module) continue;
+    if (override.is_active) {
+      available.set(override.module.slug, { ...override.module, source: 'override' });
+    } else {
+      available.delete(override.module.slug);
+    }
+  }
+
+  return [...available.values()];
+}
+
 async function enrichBusinesses(supabase: ReturnType<typeof getSupabaseAdmin>, businesses: Record<string, any>[]) {
   if (businesses.length === 0) return businesses;
 
@@ -42,7 +72,7 @@ async function enrichBusinesses(supabase: ReturnType<typeof getSupabaseAdmin>, b
   }));
 }
 
-export async function getMyBusiness(businessId: string) {
+export async function getMyBusiness(businessId: string, profileId?: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('businesses')
@@ -51,7 +81,38 @@ export async function getMyBusiness(businessId: string) {
     .single();
 
   if (error || !data) throw new NotFoundError('Negocio nao encontrado');
-  return data;
+
+  const [planModulesResult, userModulesResult] = await Promise.all([
+    data.plan_id
+      ? supabase
+          .from('plan_modules')
+          .select('module:modules!inner(id, name, slug, is_active)')
+          .eq('plan_id', data.plan_id)
+          .eq('is_active', true)
+          .eq('module.is_active', true)
+      : { data: [] as any[], error: null },
+    profileId
+      ? supabase
+          .from('user_modules')
+          .select('is_active, module:modules!inner(id, name, slug, is_active)')
+          .eq('business_id', businessId)
+          .eq('profile_id', profileId)
+          .eq('module.is_active', true)
+      : { data: [] as any[], error: null },
+  ]);
+
+  if (planModulesResult.error) throw planModulesResult.error;
+  if (userModulesResult.error) throw userModulesResult.error;
+
+  const planModules = (planModulesResult.data || [])
+    .map((row: any) => row.module)
+    .filter(Boolean) as ModuleRef[];
+  const userModules = (userModulesResult.data || []) as UserModuleOverride[];
+
+  return {
+    ...data,
+    available_modules: buildAvailableModules(planModules, userModules),
+  };
 }
 
 export async function updateMyBusiness(businessId: string, updates: Record<string, unknown>) {

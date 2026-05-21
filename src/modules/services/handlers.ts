@@ -18,7 +18,7 @@ export async function createHandler(
   request: FastifyRequest<{ Body: { name: string; category_id: string; description?: string; price?: number; price_type?: string; duration_minutes?: number; is_active?: boolean; sort_order?: number; requires_payment?: boolean; payment_type?: string; deposit_amount?: number } }>,
   reply: FastifyReply
 ) {
-  const service = await serviceService.createService(request.user.business_id!, request.body);
+  const service = await serviceService.createService(request.user.business_id!, request.body, request.user.sub);
   await request.server.audit(request, {
     action: 'create',
     entity_type: 'service',

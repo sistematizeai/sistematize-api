@@ -32,7 +32,7 @@ async function auditPluginFn(app: FastifyInstance) {
       ip_address: ip,
     });
     if (error) {
-      request.log.error({ err: error }, 'Failed to write audit log');
+      request.log.error({ err: error, request_id: request.id }, 'Failed to write audit log');
     }
   });
 }

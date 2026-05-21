@@ -1,6 +1,8 @@
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
 import { loadEnv } from './config/env.js';
@@ -26,22 +28,84 @@ import { publicRoutes } from './modules/public/routes.js';
 import { comboRoutes } from './modules/combos/routes.js';
 import { integrationRoutes } from './modules/integrations/routes.js';
 import { asaasPaymentRoutes } from './modules/asaas-payments/routes.js';
+import { financialRoutes } from './modules/financial/routes.js';
 import { webhookRoutes } from './modules/webhooks/routes.js';
 import { platformSubscriptionRoutes } from './modules/platform-subscriptions/routes.js';
 import { getSupabaseAdmin } from './config/supabase.js';
+
+type HealthCheck = {
+  status: 'ok' | 'degraded' | 'missing_config' | 'skipped';
+  message?: string;
+  latency_ms?: number;
+};
+
+function getIncomingRequestId(header: string | string[] | undefined) {
+  const value = Array.isArray(header) ? header[0] : header;
+  if (!value || value.length > 128) return randomUUID();
+  return /^[a-zA-Z0-9._:-]+$/.test(value) ? value : randomUUID();
+}
+
+async function buildHealthChecks(env: ReturnType<typeof loadEnv>): Promise<Record<string, HealthCheck>> {
+  const checks: Record<string, HealthCheck> = {};
+  const started = Date.now();
+
+  try {
+    const { error } = await getSupabaseAdmin().from('businesses').select('id', { count: 'exact', head: true }).limit(1);
+    checks.supabase = error
+      ? { status: 'degraded', message: error.message, latency_ms: Date.now() - started }
+      : { status: 'ok', latency_ms: Date.now() - started };
+  } catch (err) {
+    checks.supabase = {
+      status: 'degraded',
+      message: err instanceof Error ? err.message : 'Supabase health check failed',
+      latency_ms: Date.now() - started,
+    };
+  }
+
+  checks.asaas_platform = env.ASAAS_PLATFORM_API_KEY && env.ASAAS_PLATFORM_WALLET_ID
+    ? { status: 'ok', message: `configured:${env.ASAAS_PLATFORM_ENV}` }
+    : { status: env.NODE_ENV === 'production' ? 'missing_config' : 'skipped', message: 'ASAAS_PLATFORM_API_KEY/ASAAS_PLATFORM_WALLET_ID ausentes' };
+
+  checks.resend = env.RESEND_API_KEY
+    ? { status: 'ok' }
+    : { status: env.NODE_ENV === 'production' ? 'missing_config' : 'skipped', message: 'RESEND_API_KEY ausente' };
+
+  checks.cron = env.CRON_SECRET
+    ? { status: 'ok' }
+    : { status: env.NODE_ENV === 'production' ? 'missing_config' : 'skipped', message: 'CRON_SECRET ausente' };
+
+  return checks;
+}
 
 export async function buildApp() {
   const env = loadEnv();
 
   const app = Fastify({
     trustProxy: true,
+    genReqId: (req) => getIncomingRequestId(req.headers['x-request-id']),
     logger: {
       level: env.NODE_ENV === 'production' ? 'info' : 'debug',
     },
   });
 
+  app.addHook('onRequest', async (request, reply) => {
+    reply.header('x-request-id', request.id);
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    if (reply.statusCode >= 500) {
+      request.log.error({
+        request_id: request.id,
+        method: request.method,
+        url: request.url,
+        status_code: reply.statusCode,
+      }, 'Request finished with server error');
+    }
+  });
+
   const corsOrigins = [env.FRONTEND_ADMIN_URL, env.FRONTEND_DASHBOARD_URL, env.FRONTEND_PUBLIC_URL];
   if (process.env.FRONTEND_TUNNEL_URL) corsOrigins.push(process.env.FRONTEND_TUNNEL_URL);
+  await app.register(cookie);
   await app.register(cors, {
     origin: env.NODE_ENV === 'development' ? true : corsOrigins,
     credentials: true,
@@ -59,13 +123,14 @@ export async function buildApp() {
   await app.register(rbacPlugin);
   await app.register(auditPlugin);
 
-  app.get('/health', async () => {
-    try {
-      const { error } = await getSupabaseAdmin().from('businesses').select('id', { count: 'exact', head: true }).limit(1);
-      return { status: error ? 'degraded' : 'ok', timestamp: new Date().toISOString() };
-    } catch {
-      return { status: 'degraded', timestamp: new Date().toISOString() };
-    }
+  app.get('/health', async (_request, reply) => {
+    const checks = await buildHealthChecks(env);
+    const degraded = Object.values(checks).some(check => check.status === 'degraded' || check.status === 'missing_config');
+    return reply.status(degraded ? 503 : 200).send({
+      status: degraded ? 'degraded' : 'ok',
+      timestamp: new Date().toISOString(),
+      checks,
+    });
   });
   await app.register(authRoutes);
   await app.register(profileRoutes);
@@ -83,6 +148,7 @@ export async function buildApp() {
   await app.register(comboRoutes);
   await app.register(integrationRoutes);
   await app.register(asaasPaymentRoutes);
+  await app.register(financialRoutes);
   await app.register(webhookRoutes);
   await app.register(platformSubscriptionRoutes);
 

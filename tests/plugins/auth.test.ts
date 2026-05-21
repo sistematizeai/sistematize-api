@@ -16,6 +16,9 @@ describe('authPlugin', () => {
     app.get('/protected', { preHandler: [app.authenticate] }, async (request) => {
       return { user: request.user };
     });
+    app.post('/protected', { preHandler: [app.authenticate] }, async (request) => {
+      return { user: request.user };
+    });
 
     await app.ready();
   });
@@ -53,5 +56,50 @@ describe('authPlugin', () => {
     expect(body.user.sub).toBe('user-123');
     expect(body.user.role).toBe('owner');
     expect(body.user.business_id).toBe('biz-456');
+  });
+
+  it('returns 200 with valid token from auth cookie', async () => {
+    const token = jwt.sign(
+      { sub: 'cookie-user', role: 'owner', business_id: 'biz-cookie', iss: 'sistematize-api', aud: 'sistematize' },
+      JWT_SECRET,
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/protected',
+      headers: { cookie: `sistematize_session=${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.user.sub).toBe('cookie-user');
+    expect(body.user.business_id).toBe('biz-cookie');
+  });
+
+  it('returns 403 for unsafe cookie-authenticated requests without CSRF header', async () => {
+    const token = jwt.sign(
+      { sub: 'cookie-user', role: 'owner', business_id: 'biz-cookie', iss: 'sistematize-api', aud: 'sistematize' },
+      JWT_SECRET,
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: '/protected',
+      headers: { cookie: `sistematize_session=${token}` },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns 200 for unsafe cookie-authenticated requests with CSRF header', async () => {
+    const token = jwt.sign(
+      { sub: 'cookie-user', role: 'owner', business_id: 'biz-cookie', iss: 'sistematize-api', aud: 'sistematize' },
+      JWT_SECRET,
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: '/protected',
+      headers: {
+        cookie: `sistematize_session=${token}`,
+        'x-sistematize-csrf': '1',
+      },
+    });
+    expect(res.statusCode).toBe(200);
   });
 });

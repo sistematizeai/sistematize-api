@@ -29,10 +29,10 @@ export async function platformSubscriptionRoutes(app: FastifyInstance) {
 
   // Admin-only endpoints
   app.get('/api/admin/subscriptions', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('finance.read')],
   }, routeHandler(handlers.adminSubscriptionsHandler));
 
   app.get('/api/admin/subscriptions/stats', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('finance.read')],
   }, routeHandler(handlers.adminRevenueHandler));
 }

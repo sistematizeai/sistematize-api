@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { NotFoundError, ConflictError } from '../../utils/errors.js';
+import { assertCanCreateService } from '../modules/access-control.js';
 
 export async function listServices(businessId: string) {
   const supabase = getSupabaseAdmin();
@@ -42,8 +43,10 @@ export async function createService(businessId: string, input: {
   requires_payment?: boolean;
   payment_type?: string;
   deposit_amount?: number;
-}) {
+}, profileId?: string) {
   const supabase = getSupabaseAdmin();
+  await assertCanCreateService(businessId, profileId);
+
   const { data, error } = await supabase
     .from('services')
     .insert({ business_id: businessId, ...input })

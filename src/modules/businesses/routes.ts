@@ -14,24 +14,24 @@ export async function businessRoutes(app: FastifyInstance) {
   }, routeHandler(handlers.updateMyBusinessHandler));
 
   app.get('/api/businesses/stats', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('businesses.read')],
   }, routeHandler(handlers.statsHandler));
 
   app.get('/api/businesses', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('businesses.read')],
   }, routeHandler(handlers.listHandler));
 
   app.get('/api/businesses/:id', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin', 'sub_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('businesses.read')],
   }, routeHandler(handlers.getByIdHandler));
 
   app.put('/api/businesses/:id', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('businesses.write'), app.requireSensitiveConfirmation],
     schema: schemas.adminUpdateBusinessSchema,
   }, routeHandler(handlers.adminUpdateHandler));
 
   app.patch('/api/businesses/:id/status', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('businesses.write'), app.requireSensitiveConfirmation],
     schema: schemas.updateStatusSchema,
   }, routeHandler(handlers.updateStatusHandler));
 
@@ -44,6 +44,6 @@ export async function businessRoutes(app: FastifyInstance) {
   }, routeHandler(handlers.uploadCoverHandler));
 
   app.post('/api/businesses/block-expired', {
-    preHandler: [app.authenticate, app.requireRole(['master_admin'])],
+    preHandler: [app.authenticate, app.requirePermission('businesses.write'), app.requireSensitiveConfirmation],
   }, routeHandler(handlers.blockExpiredHandler));
 }

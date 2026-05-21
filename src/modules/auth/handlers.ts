@@ -1,5 +1,12 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import * as authService from './service.js';
+import { clearAuthSessionCookie, sanitizeAuthResponse, setAuthSessionCookie } from '../../utils/auth-session.js';
+
+function sendSession(reply: FastifyReply, result: Record<string, unknown>) {
+  if (typeof result.token !== 'string') return reply.send(result);
+  setAuthSessionCookie(reply, result.token, process.env.NODE_ENV || 'development');
+  return reply.send(sanitizeAuthResponse(result));
+}
 
 export async function registerHandler(
   request: FastifyRequest<{ Body: Record<string, unknown> }>,
@@ -37,7 +44,7 @@ export async function loginHandler(
       entity_id: result.user.id,
     });
   }
-  return reply.send(result);
+  return sendSession(reply, result);
 }
 
 export async function verify2FAHandler(
@@ -45,7 +52,7 @@ export async function verify2FAHandler(
   reply: FastifyReply,
 ) {
   const result = await authService.verify2FA(request.body.temp_token, request.body.totp_code);
-  return reply.send(result);
+  return sendSession(reply, result);
 }
 
 export async function setup2FAHandler(request: FastifyRequest, reply: FastifyReply) {
@@ -83,10 +90,15 @@ export async function completeRegistrationHandler(
     entity_id: result.user.id,
     new_data: { business_name: request.body.business_name },
   });
+  if (typeof result.token === 'string') {
+    setAuthSessionCookie(reply, result.token, process.env.NODE_ENV || 'development');
+    return reply.status(201).send(sanitizeAuthResponse(result));
+  }
   return reply.status(201).send(result);
 }
 
-export async function logoutHandler(request: FastifyRequest, reply: FastifyReply) {
+export async function logoutHandler(_request: FastifyRequest, reply: FastifyReply) {
+  clearAuthSessionCookie(reply, process.env.NODE_ENV || 'development');
   return reply.send({ message: 'Logout realizado com sucesso' });
 }
 
@@ -112,5 +124,6 @@ export async function refreshHandler(request: FastifyRequest, reply: FastifyRepl
     env.SUPABASE_JWT_SECRET,
     { expiresIn: '7d' },
   );
-  return reply.send({ token });
+  setAuthSessionCookie(reply, token, process.env.NODE_ENV || 'development');
+  return reply.send({ authenticated: true });
 }

@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { decrypt } from '../../utils/crypto.js';
+import { upsertAsaasFinancialRecord } from '../financial/service.js';
 
 const STATUS_MAP: Record<string, string> = {
   PENDING: 'waiting',
@@ -86,7 +87,14 @@ export async function processAsaasWebhook(receivedToken: string | undefined, eve
 async function processPaymentEvent(
   eventType: string,
   asaasPayment: { id: string; status: string; value: number; netValue: number },
-  localPayment: { id: string; business_id: string; appointment_id: string | null },
+  localPayment: {
+    id: string;
+    business_id: string;
+    appointment_id: string | null;
+    client_id?: string | null;
+    value?: number;
+    due_date?: string;
+  },
 ) {
   const supabase = getSupabaseAdmin();
 
@@ -111,6 +119,16 @@ async function processPaymentEvent(
       new_data: { asaas_payment_id: asaasPayment.id, event: eventType },
     });
 
+    await upsertAsaasFinancialRecord({
+      business_id: localPayment.business_id,
+      asaas_payment_row_id: localPayment.id,
+      appointment_id: localPayment.appointment_id,
+      client_id: localPayment.client_id || null,
+      value: asaasPayment.value || Number(localPayment.value || 0),
+      status: asaasPayment.status,
+      due_date: localPayment.due_date || new Date().toISOString().split('T')[0],
+    });
+
     return;
   }
 
@@ -126,6 +144,15 @@ async function processPaymentEvent(
         .update({ payment_status: 'overdue' })
         .eq('id', localPayment.appointment_id);
     }
+    await upsertAsaasFinancialRecord({
+      business_id: localPayment.business_id,
+      asaas_payment_row_id: localPayment.id,
+      appointment_id: localPayment.appointment_id,
+      client_id: localPayment.client_id || null,
+      value: asaasPayment.value || Number(localPayment.value || 0),
+      status: 'OVERDUE',
+      due_date: localPayment.due_date || new Date().toISOString().split('T')[0],
+    });
     return;
   }
 
@@ -141,6 +168,15 @@ async function processPaymentEvent(
         .update({ payment_status: 'refunded' })
         .eq('id', localPayment.appointment_id);
     }
+    await upsertAsaasFinancialRecord({
+      business_id: localPayment.business_id,
+      asaas_payment_row_id: localPayment.id,
+      appointment_id: localPayment.appointment_id,
+      client_id: localPayment.client_id || null,
+      value: asaasPayment.value || Number(localPayment.value || 0),
+      status: 'REFUNDED',
+      due_date: localPayment.due_date || new Date().toISOString().split('T')[0],
+    });
     return;
   }
 
@@ -156,6 +192,15 @@ async function processPaymentEvent(
         .update({ payment_status: 'cancelled' })
         .eq('id', localPayment.appointment_id);
     }
+    await upsertAsaasFinancialRecord({
+      business_id: localPayment.business_id,
+      asaas_payment_row_id: localPayment.id,
+      appointment_id: localPayment.appointment_id,
+      client_id: localPayment.client_id || null,
+      value: asaasPayment.value || Number(localPayment.value || 0),
+      status: 'DELETED',
+      due_date: localPayment.due_date || new Date().toISOString().split('T')[0],
+    });
     return;
   }
 
@@ -172,4 +217,14 @@ async function processPaymentEvent(
       .update({ payment_status: mappedStatus })
       .eq('id', localPayment.appointment_id);
   }
+
+  await upsertAsaasFinancialRecord({
+    business_id: localPayment.business_id,
+    asaas_payment_row_id: localPayment.id,
+    appointment_id: localPayment.appointment_id,
+    client_id: localPayment.client_id || null,
+    value: asaasPayment.value || Number(localPayment.value || 0),
+    status: asaasPayment.status,
+    due_date: localPayment.due_date || new Date().toISOString().split('T')[0],
+  });
 }

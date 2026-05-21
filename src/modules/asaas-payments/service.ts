@@ -4,10 +4,13 @@ import { decrypt } from '../../utils/crypto.js';
 import { asaasRequest } from '../../utils/asaas-client.js';
 import { NotFoundError, AppError } from '../../utils/errors.js';
 import { getConnection } from '../integrations/service.js';
+import { assertBusinessCanUseModule } from '../modules/access-control.js';
+import { upsertAsaasFinancialRecord } from '../financial/service.js';
 
 type AsaasEnv = 'sandbox' | 'production';
 
-export async function ensureAsaasCustomer(businessId: string, clientId: string) {
+export async function ensureAsaasCustomer(businessId: string, clientId: string, profileId?: string) {
+  await assertBusinessCanUseModule(businessId, 'financial', profileId);
   const supabase = getSupabaseAdmin();
 
   const { data: client, error } = await supabase
@@ -53,8 +56,9 @@ export async function createPayment(businessId: string, input: {
   dueDate: string;
   billingType: 'PIX' | 'BOLETO' | 'CREDIT_CARD' | 'UNDEFINED';
   description?: string;
-}) {
-  const asaasCustomerId = await ensureAsaasCustomer(businessId, input.clientId);
+}, profileId?: string) {
+  await assertBusinessCanUseModule(businessId, 'financial', profileId);
+  const asaasCustomerId = await ensureAsaasCustomer(businessId, input.clientId, profileId);
   const connection = await getConnection(businessId);
   const apiKey = decrypt(connection.api_key_encrypted);
 
@@ -116,6 +120,16 @@ export async function createPayment(businessId: string, input: {
       .eq('id', input.appointmentId)
       .eq('business_id', businessId);
   }
+
+  await upsertAsaasFinancialRecord({
+    business_id: businessId,
+    asaas_payment_row_id: data.id,
+    appointment_id: input.appointmentId || null,
+    client_id: input.clientId,
+    value: input.value,
+    status: payment.status,
+    due_date: input.dueDate,
+  });
 
   return data;
 }

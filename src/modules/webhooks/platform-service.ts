@@ -33,11 +33,12 @@ export async function processPlatformWebhook(event: {
     return { ignored: true, reason: 'duplicate_event' };
   }
 
-  await supabase.from('platform_webhook_events').insert({
+  const { error: insertEventError } = await supabase.from('platform_webhook_events').insert({
     asaas_event_id: event.id,
     event_type: event.event,
     payload: event,
   });
+  if (insertEventError) throw insertEventError;
 
   const payment = event.payment;
   if (!payment?.id) {
@@ -87,17 +88,19 @@ export async function processPlatformWebhook(event: {
       asaas_payment_id: payment.id,
       value: payment.value,
       net_value: payment.netValue || null,
-      status: mapPaymentStatus(payment.status),
+      status: mapPlatformPaymentStatus(payment.status),
       due_date: payment.dueDate || new Date().toISOString().split('T')[0],
-      paid_at: isPaymentConfirmed(payment.status) ? (payment.paymentDate || new Date().toISOString()) : null,
+      paid_at: isPlatformPaymentConfirmed(payment.status) ? (payment.paymentDate || new Date().toISOString()) : null,
       invoice_url: payment.invoiceUrl || null,
       bank_slip_url: payment.bankSlipUrl || null,
       pix_qr_code: payment.pixQrCode?.encodedImage || null,
       pix_payload: payment.pixQrCode?.payload || null,
     }, { onConflict: 'asaas_payment_id' });
 
+  const nextBusinessStatus = getBusinessSubscriptionStatusForPlatformEvent(event.event);
+
   // Update subscription and business status
-  if (event.event === 'PAYMENT_CONFIRMED' || event.event === 'PAYMENT_RECEIVED') {
+  if (nextBusinessStatus === 'paid') {
     if (subscriptionId) {
       await supabase
         .from('platform_subscriptions')
@@ -110,7 +113,7 @@ export async function processPlatformWebhook(event: {
       .eq('id', businessId);
   }
 
-  if (event.event === 'PAYMENT_OVERDUE') {
+  if (nextBusinessStatus === 'overdue') {
     if (subscriptionId) {
       await supabase
         .from('platform_subscriptions')
@@ -126,14 +129,14 @@ export async function processPlatformWebhook(event: {
   if (event.event === 'PAYMENT_DELETED' || event.event === 'PAYMENT_REFUNDED') {
     await supabase
       .from('platform_invoices')
-      .update({ status: mapPaymentStatus(payment.status) })
+      .update({ status: mapPlatformPaymentStatus(payment.status) })
       .eq('asaas_payment_id', payment.id);
   }
 
   return { received: true };
 }
 
-function mapPaymentStatus(asaasStatus: string): string {
+export function mapPlatformPaymentStatus(asaasStatus: string): string {
   const map: Record<string, string> = {
     PENDING: 'pending',
     RECEIVED: 'received',
@@ -147,6 +150,18 @@ function mapPaymentStatus(asaasStatus: string): string {
   return map[asaasStatus] || 'pending';
 }
 
-function isPaymentConfirmed(status: string): boolean {
+export function isPlatformPaymentConfirmed(status: string): boolean {
   return ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(status);
+}
+
+export function getBusinessSubscriptionStatusForPlatformEvent(eventName: string): 'paid' | 'overdue' | null {
+  if (eventName === 'PAYMENT_CONFIRMED' || eventName === 'PAYMENT_RECEIVED') {
+    return 'paid';
+  }
+
+  if (eventName === 'PAYMENT_OVERDUE') {
+    return 'overdue';
+  }
+
+  return null;
 }

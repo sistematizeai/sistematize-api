@@ -1,4 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+
+afterEach(() => {
+  vi.resetModules();
+  vi.restoreAllMocks();
+});
 
 describe('Asaas Payments Module', () => {
   describe('schemas', () => {
@@ -47,6 +52,29 @@ describe('Asaas Payments Module', () => {
       const handlers = await import('../../src/modules/asaas-payments/handlers.js');
       expect(typeof handlers.createPaymentHandler).toBe('function');
       expect(typeof handlers.listPaymentsHandler).toBe('function');
+    });
+
+    it('checks financial module access before creating a payment', async () => {
+      const accessError = new Error('Modulo financial nao liberado para este plano.');
+
+      vi.doMock('../../src/modules/modules/access-control.js', () => ({
+        assertBusinessCanUseModule: vi.fn().mockRejectedValue(accessError),
+      }));
+
+      vi.doMock('../../src/config/supabase.js', () => ({
+        getSupabaseAdmin: vi.fn(() => {
+          throw new Error('Supabase should not be called before financial access check');
+        }),
+      }));
+
+      const service = await import('../../src/modules/asaas-payments/service.js');
+
+      await expect(service.createPayment('biz-1', {
+        clientId: 'client-1',
+        value: 100,
+        dueDate: '2026-05-20',
+        billingType: 'PIX',
+      }, 'profile-1')).rejects.toThrow('Modulo financial nao liberado para este plano.');
     });
   });
 });

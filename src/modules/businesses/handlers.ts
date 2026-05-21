@@ -1,12 +1,10 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import * as service from './service.js';
 import { ForbiddenError } from '../../utils/errors.js';
-import { verifyTOTPToken } from '../../utils/totp.js';
-import { getSupabaseAdmin } from '../../config/supabase.js';
 
 export async function getMyBusinessHandler(request: FastifyRequest, reply: FastifyReply) {
   if (!request.user.business_id) throw new ForbiddenError('Sem negocio vinculado');
-  const data = await service.getMyBusiness(request.user.business_id);
+  const data = await service.getMyBusiness(request.user.business_id, request.user.sub);
   return reply.send(data);
 }
 
@@ -57,20 +55,6 @@ export async function updateStatusHandler(
   request: FastifyRequest<{ Params: { id: string }; Body: { status: string } }>,
   reply: FastifyReply,
 ) {
-  const totpCode = request.headers['x-totp-code'] as string;
-  if (!totpCode) throw new ForbiddenError('Codigo 2FA obrigatorio');
-
-  const supabase = getSupabaseAdmin();
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('totp_secret')
-    .eq('id', request.user.sub)
-    .single();
-
-  if (!profile?.totp_secret || !verifyTOTPToken(totpCode, profile.totp_secret)) {
-    throw new ForbiddenError('Codigo 2FA invalido');
-  }
-
   const old = await service.getBusinessById(request.params.id);
   const data = await service.updateBusinessStatus(request.params.id, request.body.status);
   await request.server.audit(request, {

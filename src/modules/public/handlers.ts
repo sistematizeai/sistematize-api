@@ -27,6 +27,14 @@ export async function getCombosHandler(
   return reply.send(combos);
 }
 
+export async function getAvailabilityHandler(
+  request: FastifyRequest<{ Params: { slug: string }; Querystring: { service_id?: string; combo_id?: string; collaborator_id?: string; date: string } }>,
+  reply: FastifyReply
+) {
+  const availability = await publicService.getPublicAvailability(request.params.slug, request.query);
+  return reply.send(availability);
+}
+
 export async function deleteClientDataHandler(
   request: FastifyRequest<{ Params: { slug: string }; Body: { client_phone: string; confirm: boolean } }>,
   reply: FastifyReply
@@ -47,6 +55,19 @@ export async function createBookingHandler(
   request: FastifyRequest<{ Params: { slug: string }; Body: { client_name: string; client_phone: string; client_email?: string; service_id?: string; combo_id?: string; collaborator_id?: string; date: string; start_time: string; notes?: string } }>,
   reply: FastifyReply
 ) {
-  const appointment = await publicService.createPublicBooking(request.params.slug, request.body);
-  return reply.status(201).send(appointment);
+  try {
+    const appointment = await publicService.createPublicBooking(request.params.slug, request.body);
+    return reply.status(201).send(appointment);
+  } catch (err) {
+    request.log.error({
+      err,
+      request_id: request.id,
+      slug: request.params.slug,
+      date: request.body.date,
+      start_time: request.body.start_time,
+      has_service: Boolean(request.body.service_id),
+      has_combo: Boolean(request.body.combo_id),
+    }, 'Public booking creation failed');
+    throw err;
+  }
 }

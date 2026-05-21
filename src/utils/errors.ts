@@ -46,6 +46,7 @@ export function errorHandler(error: Error & { statusCode?: number; validation?: 
     return reply.status(error.statusCode).send({
       error: error.code,
       message: error.message,
+      request_id: request.id,
     });
   }
 
@@ -53,6 +54,7 @@ export function errorHandler(error: Error & { statusCode?: number; validation?: 
     return reply.status(400).send({
       error: 'VALIDATION_ERROR',
       message: error.message,
+      request_id: request.id,
     });
   }
 
@@ -60,12 +62,14 @@ export function errorHandler(error: Error & { statusCode?: number; validation?: 
     return reply.status(error.statusCode).send({
       error: 'REQUEST_ERROR',
       message: error.message,
+      request_id: request.id,
     });
   }
 
-  request.log.error(error);
+  request.log.error({ err: error, request_id: request.id }, 'Unhandled request error');
   return reply.status(500).send({
     error: 'INTERNAL_ERROR',
     message: 'Erro interno do servidor',
+    request_id: request.id,
   });
 }

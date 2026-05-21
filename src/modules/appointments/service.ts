@@ -1,6 +1,7 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { sendAppointmentConfirmation, sendAppointmentCancellation } from '../notifications/service.js';
+import { assertCanCreateAppointment } from '../modules/access-control.js';
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   scheduled: ['confirmed', 'cancelled', 'no_show'],
@@ -91,8 +92,9 @@ export async function createAppointment(businessId: string, input: {
   service_ids: string[];
   notes?: string;
   source?: string;
-}) {
+}, profileId?: string) {
   const supabase = getSupabaseAdmin();
+  await assertCanCreateAppointment(businessId, profileId);
 
   const { data: services, error: svcErr } = await supabase
     .from('services')

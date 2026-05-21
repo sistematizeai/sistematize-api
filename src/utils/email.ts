@@ -34,7 +34,14 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
     });
     return true;
   } catch (err) {
-    console.error('[EMAIL] Falha ao enviar email:', err);
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'email_send_failed',
+      provider: 'resend',
+      to: options.to,
+      subject: options.subject,
+      error: err instanceof Error ? err.message : 'Unknown email error',
+    }));
     return false;
   }
 }

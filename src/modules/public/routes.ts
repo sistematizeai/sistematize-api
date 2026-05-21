@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { slugParamsSchema, publicBookingSchema, clientDataRequestSchema, clientDataDeleteSchema } from './schemas.js';
-import { getBusinessHandler, getServicesHandler, getCombosHandler, getClientDataHandler, deleteClientDataHandler, createBookingHandler } from './handlers.js';
+import { slugParamsSchema, publicBookingSchema, clientDataRequestSchema, clientDataDeleteSchema, availabilityQuerySchema } from './schemas.js';
+import { getBusinessHandler, getServicesHandler, getCombosHandler, getAvailabilityHandler, getClientDataHandler, deleteClientDataHandler, createBookingHandler } from './handlers.js';
 import { routeHandler } from '../../utils/route-handler.js';
 
 export async function publicRoutes(app: FastifyInstance) {
@@ -15,6 +15,16 @@ export async function publicRoutes(app: FastifyInstance) {
   app.get('/api/public/:slug/combos', {
     schema: slugParamsSchema,
   }, routeHandler(getCombosHandler));
+
+  app.get('/api/public/:slug/availability', {
+    schema: availabilityQuerySchema,
+    config: {
+      rateLimit: {
+        max: 60,
+        timeWindow: '1 minute',
+      },
+    },
+  }, routeHandler(getAvailabilityHandler));
 
   app.post('/api/public/:slug/delete-data', {
     schema: clientDataDeleteSchema,

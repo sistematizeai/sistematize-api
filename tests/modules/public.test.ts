@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import Fastify from 'fastify';
+import { errorHandler, ValidationError } from '../../src/utils/errors.js';
+
+afterEach(() => {
+  vi.resetModules();
+  vi.restoreAllMocks();
+});
 
 describe('Public Module', () => {
   describe('schemas', () => {
@@ -20,6 +26,14 @@ describe('Public Module', () => {
       const { clientDataDeleteSchema } = await import('../../src/modules/public/schemas.js');
       expect(clientDataDeleteSchema.body.required).toEqual(['client_phone', 'confirm']);
       expect(clientDataDeleteSchema.body.properties.confirm.enum).toEqual([true]);
+    });
+
+    it('availabilityQuerySchema requires date and accepts service, combo and collaborator filters', async () => {
+      const { availabilityQuerySchema } = await import('../../src/modules/public/schemas.js');
+      expect(availabilityQuerySchema.querystring.required).toContain('date');
+      expect(availabilityQuerySchema.querystring.properties.service_id.format).toBe('uuid');
+      expect(availabilityQuerySchema.querystring.properties.combo_id.format).toBe('uuid');
+      expect(availabilityQuerySchema.querystring.properties.collaborator_id.format).toBe('uuid');
     });
 
     it('phone field rejects non-numeric characters', async () => {
@@ -119,8 +133,72 @@ describe('Public Module', () => {
       expect(typeof handlers.getServicesHandler).toBe('function');
       expect(typeof handlers.getCombosHandler).toBe('function');
       expect(typeof handlers.createBookingHandler).toBe('function');
+      expect(typeof handlers.getAvailabilityHandler).toBe('function');
       expect(typeof handlers.getClientDataHandler).toBe('function');
       expect(typeof handlers.deleteClientDataHandler).toBe('function');
+    });
+  });
+
+  describe('availability slots', () => {
+    it('excludes occupied intervals and lunch break', async () => {
+      const service = await import('../../src/modules/public/service.js');
+      const slots = service.buildAvailableSlots({
+        date: '2026-05-20',
+        durationMinutes: 60,
+        workStart: '09:00',
+        workEnd: '13:00',
+        lunchStart: '12:00',
+        lunchEnd: '13:00',
+        appointments: [{ start_time: '10:00', end_time: '11:00' }],
+        stepMinutes: 30,
+      });
+
+      expect(slots).toEqual(['09:00', '11:00']);
+    });
+  });
+
+  describe('booking guardrails', () => {
+    it('rejects public booking when online booking is disabled', async () => {
+      const service = await import('../../src/modules/public/service.js');
+      expect(() => service.assertPublicBookingEnabled(false)).toThrow('Agendamento online esta desativado');
+    });
+
+    it('rejects inactive services before public appointment creation', async () => {
+      const service = await import('../../src/modules/public/service.js');
+      expect(() => service.assertPublicServiceActive({ id: 'svc-1', is_active: false })).toThrow('Servico esta inativo');
+    });
+
+    it('rejects inactive collaborators before public appointment creation', async () => {
+      const service = await import('../../src/modules/public/service.js');
+      expect(() => service.assertPublicCollaboratorActive({ id: 'collab-1', is_active: false })).toThrow('Colaborador esta inativo');
+    });
+
+    it('public booking route surfaces disabled-booking validation as 422', async () => {
+      vi.doMock('../../src/modules/public/service.js', () => ({
+        createPublicBooking: vi.fn().mockRejectedValue(new ValidationError('Agendamento online esta desativado para este estabelecimento.')),
+      }));
+
+      const { publicRoutes } = await import('../../src/modules/public/routes.js');
+      const app = Fastify({ logger: false });
+      app.setErrorHandler(errorHandler);
+      await publicRoutes(app);
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/public/salao-teste/appointments',
+        payload: {
+          client_name: 'Ana Silva',
+          client_phone: '11999887766',
+          service_id: '550e8400-e29b-41d4-a716-446655440000',
+          date: '2026-06-01',
+          start_time: '10:00',
+        },
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(JSON.parse(res.payload).message).toContain('Agendamento online esta desativado');
+      await app.close();
     });
   });
 });

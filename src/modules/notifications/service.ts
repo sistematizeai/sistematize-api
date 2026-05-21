@@ -17,6 +17,48 @@ interface AppointmentNotificationData {
   businessId: string;
 }
 
+type NotificationDeliveryLogInput = {
+  businessId?: string | null;
+  appointmentId?: string | null;
+  channel: 'email' | 'whatsapp';
+  type: string;
+  recipient?: string | null;
+  status: 'sent' | 'failed' | 'skipped';
+  provider?: string | null;
+  errorMessage?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export function buildPublicBusinessUrl(frontendPublicUrl: string, businessSlug: string): string {
+  const baseUrl = frontendPublicUrl.replace(/\/+$/, '');
+  const slug = businessSlug.replace(/^\/+/, '');
+  return `${baseUrl}/${slug}`;
+}
+
+export function buildNotificationDeliveryLog(input: NotificationDeliveryLogInput) {
+  return {
+    business_id: input.businessId || null,
+    appointment_id: input.appointmentId || null,
+    channel: input.channel,
+    type: input.type,
+    recipient: input.recipient || null,
+    status: input.status,
+    provider: input.provider || null,
+    error_message: input.errorMessage || null,
+    metadata: input.metadata || {},
+  };
+}
+
+async function recordNotificationDelivery(input: NotificationDeliveryLogInput) {
+  try {
+    await getSupabaseAdmin()
+      .from('notification_delivery_logs')
+      .insert(buildNotificationDeliveryLog(input));
+  } catch {
+    // Delivery logging must not break the user-facing notification flow.
+  }
+}
+
 async function getAppointmentEmailData(data: AppointmentNotificationData) {
   const supabase = getSupabaseAdmin();
 
@@ -67,10 +109,22 @@ async function getAppointmentEmailData(data: AppointmentNotificationData) {
 }
 
 export async function sendAppointmentConfirmation(data: AppointmentNotificationData) {
-  if (!isEmailConfigured()) return;
+  if (!isEmailConfigured()) {
+    await recordNotificationDelivery({
+      businessId: data.businessId,
+      appointmentId: data.appointmentId,
+      channel: 'email',
+      type: 'appointment_confirmation',
+      status: 'skipped',
+      provider: 'resend',
+      errorMessage: 'Email nao configurado',
+    });
+    return;
+  }
 
   const emailData = await getAppointmentEmailData(data);
   if (!emailData) return;
+  const env = loadEnv();
 
   const settings = emailData.notificationSettings;
   const customMessage = settings?.confirmation_template || null;
@@ -85,21 +139,42 @@ export async function sendAppointmentConfirmation(data: AppointmentNotificationD
     duration: emailData.duration,
     primaryColor: emailData.primaryColor,
     customMessage,
-    publicUrl: `https://sistematize.com/${emailData.businessSlug}`,
+    publicUrl: buildPublicBusinessUrl(env.FRONTEND_PUBLIC_URL, emailData.businessSlug),
   });
 
-  await sendEmail({
+  const sent = await sendEmail({
     to: emailData.clientEmail,
     subject: `Agendamento confirmado - ${emailData.businessName}`,
     html,
   });
+  await recordNotificationDelivery({
+    businessId: data.businessId,
+    appointmentId: data.appointmentId,
+    channel: 'email',
+    type: 'appointment_confirmation',
+    recipient: emailData.clientEmail,
+    status: sent ? 'sent' : 'failed',
+    provider: 'resend',
+  });
 }
 
 export async function sendAppointmentCancellation(data: AppointmentNotificationData) {
-  if (!isEmailConfigured()) return;
+  if (!isEmailConfigured()) {
+    await recordNotificationDelivery({
+      businessId: data.businessId,
+      appointmentId: data.appointmentId,
+      channel: 'email',
+      type: 'appointment_cancellation',
+      status: 'skipped',
+      provider: 'resend',
+      errorMessage: 'Email nao configurado',
+    });
+    return;
+  }
 
   const emailData = await getAppointmentEmailData(data);
   if (!emailData) return;
+  const env = loadEnv();
 
   const html = cancellationTemplate({
     clientName: emailData.clientName,
@@ -111,18 +186,38 @@ export async function sendAppointmentCancellation(data: AppointmentNotificationD
     duration: emailData.duration,
     primaryColor: emailData.primaryColor,
     cancelReason: emailData.cancelReason || undefined,
-    publicUrl: `https://sistematize.com/${emailData.businessSlug}`,
+    publicUrl: buildPublicBusinessUrl(env.FRONTEND_PUBLIC_URL, emailData.businessSlug),
   });
 
-  await sendEmail({
+  const sent = await sendEmail({
     to: emailData.clientEmail,
     subject: `Agendamento cancelado - ${emailData.businessName}`,
     html,
   });
+  await recordNotificationDelivery({
+    businessId: data.businessId,
+    appointmentId: data.appointmentId,
+    channel: 'email',
+    type: 'appointment_cancellation',
+    recipient: emailData.clientEmail,
+    status: sent ? 'sent' : 'failed',
+    provider: 'resend',
+  });
 }
 
 export async function sendAppointmentReminder(appointmentId: string, businessId: string) {
-  if (!isEmailConfigured()) return;
+  if (!isEmailConfigured()) {
+    await recordNotificationDelivery({
+      businessId,
+      appointmentId,
+      channel: 'email',
+      type: 'appointment_reminder',
+      status: 'skipped',
+      provider: 'resend',
+      errorMessage: 'Email nao configurado',
+    });
+    return;
+  }
 
   const emailData = await getAppointmentEmailData({ appointmentId, businessId });
   if (!emailData) return;
@@ -144,10 +239,19 @@ export async function sendAppointmentReminder(appointmentId: string, businessId:
     customMessage,
   });
 
-  await sendEmail({
+  const sent = await sendEmail({
     to: emailData.clientEmail,
     subject: `Lembrete: agendamento amanha - ${emailData.businessName}`,
     html,
+  });
+  await recordNotificationDelivery({
+    businessId,
+    appointmentId,
+    channel: 'email',
+    type: 'appointment_reminder',
+    recipient: emailData.clientEmail,
+    status: sent ? 'sent' : 'failed',
+    provider: 'resend',
   });
 }
 

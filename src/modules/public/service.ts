@@ -16,6 +16,79 @@ type CollaboratorServiceRow = {
   } | null;
 };
 
+type AppointmentInterval = {
+  start_time: string;
+  end_time: string;
+};
+
+type AvailableSlotsInput = {
+  date: string;
+  durationMinutes: number;
+  workStart: string;
+  workEnd: string;
+  lunchStart?: string | null;
+  lunchEnd?: string | null;
+  appointments: AppointmentInterval[];
+  stepMinutes?: number;
+};
+
+export function assertPublicBookingEnabled(bookingEnabled: boolean) {
+  if (!bookingEnabled) {
+    throw new ValidationError('Agendamento online esta desativado para este estabelecimento.');
+  }
+}
+
+export function assertPublicServiceActive(service: { id: string; is_active: boolean } | null | undefined) {
+  if (!service) throw new NotFoundError('Servico nao encontrado.');
+  if (!service.is_active) throw new ValidationError('Servico esta inativo.');
+}
+
+export function assertPublicCollaboratorActive(collaborator: { id: string; is_active: boolean } | null | undefined) {
+  if (!collaborator) throw new NotFoundError('Colaborador nao encontrado.');
+  if (!collaborator.is_active) throw new ValidationError('Colaborador esta inativo.');
+}
+
+function normalizeTime(time: string): string {
+  return time.substring(0, 5);
+}
+
+function timeToMinutes(time: string): number {
+  const [hours, minutes] = normalizeTime(time).split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+function minutesToTime(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+}
+
+function overlaps(startA: number, endA: number, startB: number, endB: number): boolean {
+  return startA < endB && endA > startB;
+}
+
+export function buildAvailableSlots(input: AvailableSlotsInput): string[] {
+  const step = input.stepMinutes || 30;
+  const workStart = timeToMinutes(input.workStart);
+  const workEnd = timeToMinutes(input.workEnd);
+  const lunchStart = input.lunchStart ? timeToMinutes(input.lunchStart) : null;
+  const lunchEnd = input.lunchEnd ? timeToMinutes(input.lunchEnd) : null;
+  const appointments = input.appointments.map((appointment) => ({
+    start: timeToMinutes(appointment.start_time),
+    end: timeToMinutes(appointment.end_time),
+  }));
+
+  const slots: string[] = [];
+  for (let start = workStart; start + input.durationMinutes <= workEnd; start += step) {
+    const end = start + input.durationMinutes;
+    if (lunchStart !== null && lunchEnd !== null && overlaps(start, end, lunchStart, lunchEnd)) continue;
+    if (appointments.some((appointment) => overlaps(start, end, appointment.start, appointment.end))) continue;
+    slots.push(minutesToTime(start));
+  }
+
+  return slots;
+}
+
 export async function getBusinessBySlug(slug: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
@@ -82,6 +155,155 @@ export async function getPublicCombos(businessId: string) {
       services,
     };
   }).filter((c: any) => c.services.length > 0);
+}
+
+export async function getPublicAvailability(slug: string, input: {
+  service_id?: string;
+  combo_id?: string;
+  collaborator_id?: string;
+  date: string;
+}) {
+  const supabase = getSupabaseAdmin();
+  const { data: business } = await supabase
+    .from('businesses')
+    .select('id, booking_enabled')
+    .eq('slug', slug)
+    .eq('is_active', true)
+    .single();
+
+  if (!business) throw new NotFoundError('Salao nao encontrado.');
+  assertPublicBookingEnabled(business.booking_enabled);
+
+  const { serviceIds, durationMinutes } = await resolvePublicBookingServices(
+    business.id,
+    input.service_id,
+    input.combo_id,
+  );
+
+  const { data: collaboratorServices } = await supabase
+    .from('collaborator_services')
+    .select('collaborator_id, service_id, collaborator:collaborators(id, name, is_active, work_start, work_end)')
+    .eq('business_id', business.id)
+    .eq('is_active', true)
+    .in('service_id', serviceIds);
+
+  const collabMap = new Map<string, {
+    collaborator: { id: string; name: string; is_active: boolean; work_start: string | null; work_end: string | null };
+    serviceIds: Set<string>;
+  }>();
+
+  for (const row of collaboratorServices || []) {
+    const collaborator = (row as any).collaborator;
+    if (!collaborator?.is_active) continue;
+    if (input.collaborator_id && collaborator.id !== input.collaborator_id) continue;
+    const existing = collabMap.get(collaborator.id);
+    if (existing) {
+      existing.serviceIds.add((row as any).service_id);
+    } else {
+      collabMap.set(collaborator.id, {
+        collaborator,
+        serviceIds: new Set([(row as any).service_id]),
+      });
+    }
+  }
+
+  const date = new Date(`${input.date}T00:00:00Z`);
+  const dayOfWeek = date.getUTCDay();
+  const collaborators = [];
+
+  for (const entry of Array.from(collabMap.values()).filter((entry) => serviceIds.every((id: string) => entry.serviceIds.has(id)))) {
+    const collaborator = entry.collaborator;
+    const { data: schedule } = await supabase
+      .from('collaborator_schedules')
+      .select('is_working, work_start, work_end, lunch_start, lunch_end')
+      .eq('business_id', business.id)
+      .eq('collaborator_id', collaborator.id)
+      .eq('day_of_week', dayOfWeek)
+      .maybeSingle();
+
+    if (schedule && !schedule.is_working) {
+      collaborators.push({ id: collaborator.id, name: collaborator.name, slots: [] });
+      continue;
+    }
+
+    const { data: appointments } = await supabase
+      .from('appointments')
+      .select('start_time, end_time')
+      .eq('business_id', business.id)
+      .eq('collaborator_id', collaborator.id)
+      .eq('date', input.date)
+      .not('status', 'in', '("cancelled","no_show")');
+
+    const slots = buildAvailableSlots({
+      date: input.date,
+      durationMinutes,
+      workStart: schedule?.work_start || collaborator.work_start || '08:00',
+      workEnd: schedule?.work_end || collaborator.work_end || '18:00',
+      lunchStart: schedule?.lunch_start || null,
+      lunchEnd: schedule?.lunch_end || null,
+      appointments: (appointments || []) as AppointmentInterval[],
+      stepMinutes: 30,
+    });
+
+    collaborators.push({ id: collaborator.id, name: collaborator.name, slots });
+  }
+
+  return {
+    date: input.date,
+    duration_minutes: durationMinutes,
+    service_ids: serviceIds,
+    slots: Array.from(new Set(collaborators.flatMap((collaborator) => collaborator.slots))).sort(),
+    collaborators,
+  };
+}
+
+async function resolvePublicBookingServices(
+  businessId: string,
+  serviceId?: string,
+  comboId?: string,
+) {
+  const supabase = getSupabaseAdmin();
+
+  if (comboId) {
+    const { data: combo, error } = await supabase
+      .from('combos')
+      .select('id, duration_minutes, is_active, combo_services(service_id, service:services(id, duration_minutes, is_active))')
+      .eq('id', comboId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (error || !combo) throw new NotFoundError('Combo nao encontrado.');
+    if (!combo.is_active) throw new ValidationError('Combo esta inativo.');
+
+    const services = ((combo as any).combo_services || [])
+      .map((row: any) => row.service)
+      .filter((service: any) => service?.is_active);
+    if (services.length === 0) throw new ValidationError('Combo nao possui servicos ativos.');
+
+    return {
+      serviceIds: services.map((service: any) => service.id),
+      durationMinutes: combo.duration_minutes || services.reduce((sum: number, service: any) => sum + (service.duration_minutes || 0), 0),
+    };
+  }
+
+  if (serviceId) {
+    const { data: service, error } = await supabase
+      .from('services')
+      .select('id, duration_minutes, is_active')
+      .eq('id', serviceId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (error || !service) throw new NotFoundError('Servico nao encontrado.');
+    assertPublicServiceActive(service);
+
+    return {
+      serviceIds: [service.id],
+      durationMinutes: service.duration_minutes || 30,
+    };
+  }
+
+  throw new ValidationError('Informe service_id ou combo_id.');
 }
 
 export async function getClientData(slug: string, clientPhone: string) {
@@ -208,9 +430,7 @@ export async function createPublicBooking(slug: string, input: {
     .single();
 
   if (!bizRaw) throw new NotFoundError('Salao nao encontrado.');
-  if (!bizRaw.booking_enabled) {
-    throw new ValidationError('Agendamento online esta desativado para este estabelecimento.');
-  }
+  assertPublicBookingEnabled(bizRaw.booking_enabled);
 
   const bs = (bizRaw.booking_settings as Record<string, any>) || {};
   const minAdvanceHours = bs.min_advance_hours ?? 1;
@@ -229,25 +449,22 @@ export async function createPublicBooking(slug: string, input: {
 
   const business = { id: bizRaw.id, name: bizRaw.name, slug: bizRaw.slug, booking_enabled: bizRaw.booking_enabled };
 
-  let serviceIds: string[] = [];
+  const { serviceIds } = await resolvePublicBookingServices(
+    business.id,
+    input.service_id,
+    input.combo_id,
+  );
 
-  if (input.combo_id) {
-    const supabase = getSupabaseAdmin();
-    const { data: combo, error } = await supabase
-      .from('combos')
-      .select('id, is_active, combo_services(service_id)')
-      .eq('id', input.combo_id)
+  if (input.collaborator_id) {
+    const { data: collaborator, error } = await supabaseForBiz
+      .from('collaborators')
+      .select('id, is_active')
+      .eq('id', input.collaborator_id)
       .eq('business_id', business.id)
       .single();
 
-    if (error || !combo) throw new NotFoundError('Combo nao encontrado.');
-    if (!combo.is_active) throw new ValidationError('Combo esta inativo.');
-    serviceIds = (combo.combo_services || []).map((cs: any) => cs.service_id);
-    if (serviceIds.length === 0) throw new ValidationError('Combo nao possui servicos.');
-  } else if (input.service_id) {
-    serviceIds = [input.service_id];
-  } else {
-    throw new ValidationError('Informe service_id ou combo_id.');
+    if (error || !collaborator) throw new NotFoundError('Colaborador nao encontrado.');
+    assertPublicCollaboratorActive(collaborator);
   }
 
   const client = await findOrCreateClientByPhone(business.id, input.client_name, input.client_phone, input.client_email, input.lgpd_consent);

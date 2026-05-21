@@ -21,7 +21,7 @@ export async function createHandler(
   request: FastifyRequest<{ Body: { client_id: string; collaborator_id: string; date: string; start_time: string; service_ids: string[]; notes?: string; source?: string } }>,
   reply: FastifyReply
 ) {
-  const appointment = await appointmentService.createAppointment(request.user.business_id!, request.body);
+  const appointment = await appointmentService.createAppointment(request.user.business_id!, request.body, request.user.sub);
   await request.server.audit(request, {
     action: 'create',
     entity_type: 'appointment',

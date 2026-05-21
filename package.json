@@ -9,7 +9,8 @@
     "build": "tsc",
     "start": "node --trace-warnings dist/server.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "validate:platform-subscription": "tsx scripts/validate-platform-subscription.ts"
   },
   "engines": {
     "node": ">=20.0.0"
