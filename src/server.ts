@@ -66,9 +66,22 @@ async function buildHealthChecks(env: ReturnType<typeof loadEnv>): Promise<Recor
     ? { status: 'ok', message: `configured:${env.ASAAS_PLATFORM_ENV}` }
     : { status: env.NODE_ENV === 'production' ? 'missing_config' : 'skipped', message: 'ASAAS_PLATFORM_API_KEY/ASAAS_PLATFORM_WALLET_ID ausentes' };
 
-  checks.resend = env.RESEND_API_KEY
-    ? { status: 'ok' }
-    : { status: env.NODE_ENV === 'production' ? 'missing_config' : 'skipped', message: 'RESEND_API_KEY ausente' };
+  const smtpConfigured = Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS && env.FROM_EMAIL);
+  const gmailApiConfigured = Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REFRESH_TOKEN && env.FROM_EMAIL);
+  const resendConfigured = Boolean(env.RESEND_API_KEY && env.FROM_EMAIL);
+  if (env.EMAIL_PROVIDER === 'smtp') {
+    checks.email = smtpConfigured
+      ? { status: 'ok', message: 'provider:smtp' }
+      : { status: env.NODE_ENV === 'production' ? 'missing_config' : 'skipped', message: 'SMTP_HOST/SMTP_USER/SMTP_PASS/FROM_EMAIL ausentes' };
+  } else if (env.EMAIL_PROVIDER === 'gmail_api') {
+    checks.email = gmailApiConfigured
+      ? { status: 'ok', message: 'provider:gmail_api' }
+      : { status: env.NODE_ENV === 'production' ? 'missing_config' : 'skipped', message: 'GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/GOOGLE_REFRESH_TOKEN/FROM_EMAIL ausentes' };
+  } else {
+    checks.email = resendConfigured
+      ? { status: 'ok', message: 'provider:resend' }
+      : { status: env.NODE_ENV === 'production' ? 'missing_config' : 'skipped', message: 'RESEND_API_KEY/FROM_EMAIL ausentes' };
+  }
 
   checks.cron = env.CRON_SECRET
     ? { status: 'ok' }

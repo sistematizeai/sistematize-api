@@ -157,6 +157,49 @@ describe('Email Utility', () => {
     expect(typeof email.sendEmail).toBe('function');
     expect(typeof email.isEmailConfigured).toBe('function');
   });
+
+  it('documents Gmail SMTP configuration keys for production email', async () => {
+    const fs = await import('node:fs');
+    const envExample = fs.readFileSync('.env.example', 'utf8');
+    expect(envExample).toContain('EMAIL_PROVIDER=gmail_api');
+    expect(envExample).toContain('GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com');
+    expect(envExample).toContain('GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret');
+    expect(envExample).toContain('GOOGLE_REFRESH_TOKEN=your-google-oauth-refresh-token');
+    expect(envExample).toContain('SMTP_HOST=smtp.gmail.com');
+    expect(envExample).toContain('SMTP_USER=sistematizeai@gmail.com');
+    expect(envExample).toContain('FROM_EMAIL=Sistematize <sistematizeai@gmail.com>');
+  });
+
+  it('supports Gmail API OAuth configuration without app passwords', async () => {
+    const previous = {
+      EMAIL_PROVIDER: process.env.EMAIL_PROVIDER,
+      GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+      GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN,
+      FROM_EMAIL: process.env.FROM_EMAIL,
+      RESEND_API_KEY: process.env.RESEND_API_KEY,
+    };
+
+    process.env.EMAIL_PROVIDER = 'gmail_api';
+    process.env.GOOGLE_CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
+    process.env.GOOGLE_CLIENT_SECRET = 'test-client-secret';
+    process.env.GOOGLE_REFRESH_TOKEN = 'test-refresh-token';
+    process.env.FROM_EMAIL = 'Sistematize <sistematizeai@gmail.com>';
+    delete process.env.RESEND_API_KEY;
+
+    try {
+      const email = await import('../../src/utils/email.js');
+      expect(email.isEmailConfigured()).toBe(true);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+  });
 });
 
 describe('Notification Service', () => {

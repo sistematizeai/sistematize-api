@@ -10,6 +10,7 @@
     "start": "node --trace-warnings dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "generate:gmail-refresh-token": "tsx scripts/generate-gmail-refresh-token.ts",
     "validate:platform-subscription": "tsx scripts/validate-platform-subscription.ts"
   },
   "engines": {
@@ -29,6 +30,7 @@
     "fastify": "^5.8.5",
     "fastify-plugin": "^5.1.0",
     "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^8.0.7",
     "otpauth": "^9.5.1",
     "qrcode": "^1.5.4",
     "resend": "^6.12.3",
@@ -40,6 +42,7 @@
     "@sinclair/typebox": "^0.34.49",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.6.0",
+    "@types/nodemailer": "^8.0.0",
     "@types/qrcode": "^1.5.6",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
