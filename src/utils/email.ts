@@ -25,13 +25,28 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
 
   const env = loadEnv();
   try {
-    await resend.emails.send({
+    const result = await resend.emails.send({
       from: env.FROM_EMAIL,
       to: options.to,
       subject: options.subject,
       html: options.html,
       replyTo: options.replyTo || env.REPLY_TO_EMAIL || undefined,
     });
+
+    if (result.error) {
+      console.error(JSON.stringify({
+        level: 'error',
+        event: 'email_send_failed',
+        provider: 'resend',
+        to: options.to,
+        subject: options.subject,
+        error: result.error.message,
+        code: result.error.name,
+        status_code: result.error.statusCode,
+      }));
+      return false;
+    }
+
     return true;
   } catch (err) {
     console.error(JSON.stringify({
