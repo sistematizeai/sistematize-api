@@ -177,11 +177,19 @@ export async function registerUser(input: RegisterInput) {
 
   const confirmUrl = `${env.FRONTEND_DASHBOARD_URL}/auth/callback?token=${confirmToken}`;
 
-  await sendEmail({
+  const confirmationSent = await sendEmail({
     to: input.email,
     subject: 'Confirme seu email — Sistematize',
     html: emailConfirmationTemplate({ userName: input.full_name, confirmUrl }),
   });
+
+  if (!confirmationSent) {
+    throw new AppError(
+      502,
+      'Conta criada, mas nao foi possivel enviar o email de confirmacao. Sem dominio verificado no Resend, o remetente de teste so envia para o email da conta Resend.',
+      'EMAIL_DELIVERY_FAILED',
+    );
+  }
 
   return { success: true, email: input.email };
 }
@@ -212,7 +220,7 @@ export async function resendConfirmation(email: string) {
 
   const confirmUrl = `${env.FRONTEND_DASHBOARD_URL}/auth/callback?token=${confirmToken}`;
 
-  await sendEmail({
+  const confirmationSent = await sendEmail({
     to: email,
     subject: 'Confirme seu email — Sistematize',
     html: emailConfirmationTemplate({
@@ -220,6 +228,14 @@ export async function resendConfirmation(email: string) {
       confirmUrl,
     }),
   });
+
+  if (!confirmationSent) {
+    throw new AppError(
+      502,
+      'Nao foi possivel reenviar o email de confirmacao. Sem dominio verificado no Resend, o remetente de teste so envia para o email da conta Resend.',
+      'EMAIL_DELIVERY_FAILED',
+    );
+  }
 
   return { success: true };
 }
