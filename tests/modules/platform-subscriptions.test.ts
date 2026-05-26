@@ -396,4 +396,42 @@ describe('Platform subscriptions hardening', () => {
       failing_payment_method_count: 1,
     });
   });
+
+  it('normalizes admin billing period filters for inclusive date ranges', async () => {
+    const { normalizeAdminBillingPeriodFilters } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(normalizeAdminBillingPeriodFilters({
+      dateFrom: '2026-05-01',
+      dateTo: '2026-05-31',
+    })).toEqual({
+      dateFrom: '2026-05-01',
+      dateTo: '2026-05-31',
+    });
+
+    expect(normalizeAdminBillingPeriodFilters({
+      dateFrom: 'invalid',
+      dateTo: '',
+    })).toEqual({});
+  });
+
+  it('builds a safe CSV export for billing invoices', async () => {
+    const { buildBillingInvoicesCsv } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    const csv = buildBillingInvoicesCsv([
+      {
+        asaas_payment_id: 'pay_123',
+        business: { name: 'Studio "Prime", Centro', slug: 'studio-prime' },
+        value: 99.9,
+        status: 'refused',
+        due_date: '2026-05-26',
+        billing_type: 'CREDIT_CARD',
+        retry_count: 2,
+        last_failure_message: 'Cartao recusado, tente outro',
+      },
+    ]);
+
+    expect(csv.split('\n')[0]).toBe('fatura,empresa,slug,valor,status,vencimento,forma_pagamento,tentativas,ultima_falha');
+    expect(csv).toContain('"Studio ""Prime"", Centro"');
+    expect(csv).toContain('"Cartao recusado, tente outro"');
+  });
 });

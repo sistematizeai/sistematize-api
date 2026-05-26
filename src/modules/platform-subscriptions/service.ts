@@ -554,6 +554,55 @@ export function buildAdminBillingOperationsSummary(input: {
   };
 }
 
+function isDateOnly(value: string | null | undefined) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  return !Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime());
+}
+
+export function normalizeAdminBillingPeriodFilters(input: {
+  dateFrom?: string | null;
+  dateTo?: string | null;
+}) {
+  const normalized: { dateFrom?: string; dateTo?: string } = {};
+  if (isDateOnly(input.dateFrom)) normalized.dateFrom = input.dateFrom!;
+  if (isDateOnly(input.dateTo)) normalized.dateTo = input.dateTo!;
+  return normalized;
+}
+
+function escapeCsvValue(value: unknown) {
+  const text = value == null ? '' : String(value);
+  if (!/[",\n\r]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+export function buildBillingInvoicesCsv(rows: Array<Record<string, any>>) {
+  const headers = [
+    'fatura',
+    'empresa',
+    'slug',
+    'valor',
+    'status',
+    'vencimento',
+    'forma_pagamento',
+    'tentativas',
+    'ultima_falha',
+  ];
+
+  const lines = rows.map(row => [
+    row.asaas_payment_id,
+    row.business?.name,
+    row.business?.slug,
+    row.value,
+    row.status,
+    row.due_date,
+    row.billing_type,
+    row.retry_count,
+    row.last_failure_message,
+  ].map(escapeCsvValue).join(','));
+
+  return [headers.join(','), ...lines].join('\n');
+}
+
 export function classifyPlanChange(currentValue: number, targetValue: number): PlanChangeType {
   const current = roundCurrency(currentValue);
   const target = roundCurrency(targetValue);
@@ -1619,6 +1668,8 @@ export async function adminGetRevenueStats() {
 export async function adminListBillingInvoices(filters: {
   status?: string;
   businessId?: string;
+  dateFrom?: string;
+  dateTo?: string;
   page?: number;
   limit?: number;
 }) {
@@ -1626,6 +1677,10 @@ export async function adminListBillingInvoices(filters: {
   const page = Math.max(filters.page || 1, 1);
   const limit = Math.min(Math.max(filters.limit || 25, 1), 100);
   const offset = (page - 1) * limit;
+  const period = normalizeAdminBillingPeriodFilters({
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+  });
 
   let query = supabase
     .from('platform_invoices')
@@ -1661,16 +1716,57 @@ export async function adminListBillingInvoices(filters: {
 
   if (filters.status) query = query.eq('status', filters.status);
   if (filters.businessId) query = query.eq('business_id', filters.businessId);
+  if (period.dateFrom) query = query.gte('due_date', period.dateFrom);
+  if (period.dateTo) query = query.lte('due_date', period.dateTo);
 
   const { data, error, count } = await query;
   if (error) throw error;
   return { data: data || [], total: count || 0, page, limit };
 }
 
+export async function adminExportBillingInvoicesCsv(filters: {
+  status?: string;
+  businessId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}) {
+  const supabase = getSupabaseAdmin();
+  const period = normalizeAdminBillingPeriodFilters({
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+  });
+
+  let query = supabase
+    .from('platform_invoices')
+    .select(`
+      asaas_payment_id,
+      value,
+      billing_type,
+      status,
+      due_date,
+      retry_count,
+      last_failure_message,
+      business:businesses(name, slug)
+    `)
+    .order('created_at', { ascending: false })
+    .limit(5000);
+
+  if (filters.status) query = query.eq('status', filters.status);
+  if (filters.businessId) query = query.eq('business_id', filters.businessId);
+  if (period.dateFrom) query = query.gte('due_date', period.dateFrom);
+  if (period.dateTo) query = query.lte('due_date', period.dateTo);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return buildBillingInvoicesCsv(data || []);
+}
+
 export async function adminListBillingEvents(filters: {
   severity?: string;
   businessId?: string;
   invoiceId?: string;
+  dateFrom?: string;
+  dateTo?: string;
   page?: number;
   limit?: number;
 }) {
@@ -1678,6 +1774,10 @@ export async function adminListBillingEvents(filters: {
   const page = Math.max(filters.page || 1, 1);
   const limit = Math.min(Math.max(filters.limit || 30, 1), 100);
   const offset = (page - 1) * limit;
+  const period = normalizeAdminBillingPeriodFilters({
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+  });
 
   let query = supabase
     .from('platform_billing_events')
@@ -1702,6 +1802,8 @@ export async function adminListBillingEvents(filters: {
   if (filters.severity) query = query.eq('severity', filters.severity);
   if (filters.businessId) query = query.eq('business_id', filters.businessId);
   if (filters.invoiceId) query = query.eq('invoice_id', filters.invoiceId);
+  if (period.dateFrom) query = query.gte('created_at', `${period.dateFrom}T00:00:00.000Z`);
+  if (period.dateTo) query = query.lte('created_at', `${period.dateTo}T23:59:59.999Z`);
 
   const { data, error, count } = await query;
   if (error) throw error;

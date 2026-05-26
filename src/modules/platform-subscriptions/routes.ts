@@ -77,6 +77,10 @@ export async function platformSubscriptionRoutes(app: FastifyInstance) {
     preHandler: [app.authenticate, app.requirePermission('finance.read')],
   }, routeHandler(handlers.adminBillingInvoicesHandler));
 
+  app.get('/api/admin/billing/invoices/export.csv', {
+    preHandler: [app.authenticate, app.requirePermission('finance.read')],
+  }, routeHandler(handlers.adminBillingInvoicesExportHandler));
+
   app.get('/api/admin/billing/events', {
     preHandler: [app.authenticate, app.requirePermission('finance.read')],
   }, routeHandler(handlers.adminBillingEventsHandler));
