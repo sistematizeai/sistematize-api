@@ -49,6 +49,11 @@ type CreditCardHolderInfoInput = {
   phone?: string;
 };
 
+type CheckoutCardPaymentInput = {
+  creditCard: CreditCardInput;
+  holderInfo: CreditCardHolderInfoInput;
+};
+
 type PlanLimits = {
   max_collaborators?: number | null;
   max_services?: number | null;
@@ -201,6 +206,41 @@ function onlyDigits(value: string | null | undefined) {
   return String(value || '').replace(/\D/g, '');
 }
 
+function trimText(value: string | null | undefined) {
+  return String(value || '').trim();
+}
+
+function normalizeExpiryMonth(value: string) {
+  const digits = onlyDigits(value).slice(0, 2);
+  return digits.length === 1 ? digits.padStart(2, '0') : digits;
+}
+
+function normalizeExpiryYear(value: string) {
+  const digits = onlyDigits(value).slice(0, 4);
+  if (digits.length === 2) return `20${digits}`;
+  return digits;
+}
+
+export function normalizeCheckoutCardPaymentInput(input: CheckoutCardPaymentInput): CheckoutCardPaymentInput {
+  return {
+    creditCard: {
+      holderName: trimText(input.creditCard.holderName),
+      number: onlyDigits(input.creditCard.number),
+      expiryMonth: normalizeExpiryMonth(input.creditCard.expiryMonth),
+      expiryYear: normalizeExpiryYear(input.creditCard.expiryYear),
+      ccv: onlyDigits(input.creditCard.ccv).slice(0, 4),
+    },
+    holderInfo: {
+      name: trimText(input.holderInfo.name),
+      email: trimText(input.holderInfo.email).toLowerCase(),
+      cpfCnpj: onlyDigits(input.holderInfo.cpfCnpj),
+      postalCode: onlyDigits(input.holderInfo.postalCode),
+      addressNumber: trimText(input.holderInfo.addressNumber),
+      phone: input.holderInfo.phone ? onlyDigits(input.holderInfo.phone) : undefined,
+    },
+  };
+}
+
 function resolveTokenizedCardLast4(tokenization: AsaasTokenizedCreditCard, rawCardNumber?: string) {
   const fromAsaas = onlyDigits(tokenization.creditCardNumber || tokenization.last4);
   const fromRaw = onlyDigits(rawCardNumber);
@@ -230,6 +270,29 @@ export function buildStoredPaymentMethodRecord(input: {
     card_brand: input.tokenization.creditCardBrand || input.tokenization.brand || null,
     card_last4: resolveTokenizedCardLast4(input.tokenization, input.rawCardNumber),
     is_default: true,
+  };
+}
+
+export function buildImmediatePaidCheckoutEffects(input: {
+  invoice: { purpose?: string | null; pending_plan_id?: string | null; subscription_id?: string | null };
+  subscription: { id: string; business_id: string; plan_id: string } | null;
+}) {
+  if (!input.invoice.subscription_id || !input.subscription) {
+    return { action: 'none' as const };
+  }
+
+  if (input.invoice.purpose === 'plan_change' && input.invoice.pending_plan_id) {
+    return {
+      action: 'apply_pending_plan_change' as const,
+      subscription_id: input.invoice.subscription_id,
+    };
+  }
+
+  return {
+    action: 'activate_subscription' as const,
+    subscription_id: input.subscription.id,
+    business_id: input.subscription.business_id,
+    plan_id: input.subscription.plan_id,
   };
 }
 
@@ -854,10 +917,44 @@ export async function getCheckoutInvoice(businessId: string, invoiceId: string) 
   };
 }
 
+async function applyImmediatePaidCheckoutEffects(businessId: string, invoice: any) {
+  if (!invoice.subscription_id) return { action: 'none' as const };
+
+  const supabase = getSupabaseAdmin();
+  const { data: subscription, error } = await supabase
+    .from('platform_subscriptions')
+    .select('id, business_id, plan_id')
+    .eq('id', invoice.subscription_id)
+    .eq('business_id', businessId)
+    .maybeSingle();
+
+  if (error) throw error;
+  const effect = buildImmediatePaidCheckoutEffects({ invoice, subscription });
+
+  if (effect.action === 'apply_pending_plan_change') {
+    await applyPendingPlanChange(effect.subscription_id);
+    return effect;
+  }
+
+  if (effect.action === 'activate_subscription') {
+    await supabase
+      .from('platform_subscriptions')
+      .update({ status: 'active' })
+      .eq('id', effect.subscription_id);
+
+    await supabase
+      .from('businesses')
+      .update({ subscription_status: 'paid', plan_id: effect.plan_id })
+      .eq('id', effect.business_id);
+  }
+
+  return effect;
+}
+
 export async function payCheckoutInvoiceWithCard(
   businessId: string,
   invoiceId: string,
-  input: { creditCard: CreditCardInput; holderInfo: CreditCardHolderInfoInput },
+  input: CheckoutCardPaymentInput,
   remoteIp: string,
 ) {
   const invoice = await getOwnedInvoice(businessId, invoiceId);
@@ -865,6 +962,7 @@ export async function payCheckoutInvoiceWithCard(
     throw new AppError(409, 'Esta fatura nao esta pendente de pagamento.', 'INVOICE_NOT_PAYABLE');
   }
 
+  const normalizedInput = normalizeCheckoutCardPaymentInput(input);
   const customerId = await ensurePlatformCustomer(businessId);
   const { apiKey, environment } = getPlatformAsaas();
   const tokenization = await asaasRequest<AsaasTokenizedCreditCard>({
@@ -874,8 +972,8 @@ export async function payCheckoutInvoiceWithCard(
     method: 'POST',
     body: {
       customer: customerId,
-      creditCard: input.creditCard,
-      creditCardHolderInfo: input.holderInfo,
+      creditCard: normalizedInput.creditCard,
+      creditCardHolderInfo: normalizedInput.holderInfo,
       remoteIp,
     },
   });
@@ -884,8 +982,8 @@ export async function payCheckoutInvoiceWithCard(
     businessId,
     customerId,
     tokenization,
-    holderName: input.creditCard.holderName,
-    rawCardNumber: input.creditCard.number,
+    holderName: normalizedInput.creditCard.holderName,
+    rawCardNumber: normalizedInput.creditCard.number,
   });
 
   const supabase = getSupabaseAdmin();
@@ -941,12 +1039,17 @@ export async function payCheckoutInvoiceWithCard(
     .single();
 
   if (invoiceUpdateError) throw invoiceUpdateError;
+  const paid = ['CONFIRMED', 'RECEIVED', 'confirmed', 'received'].includes(payment.status || '');
+  const effect = paid
+    ? await applyImmediatePaidCheckoutEffects(businessId, updatedInvoice)
+    : { action: 'waiting_confirmation' as const };
 
   return {
     success: true,
     invoice: updatedInvoice,
     payment_method: paymentMethod,
-    paid: ['CONFIRMED', 'RECEIVED', 'confirmed', 'received'].includes(payment.status || ''),
+    paid,
+    effect,
   };
 }
 

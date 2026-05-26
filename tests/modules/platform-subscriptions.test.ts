@@ -168,6 +168,70 @@ describe('Platform subscriptions hardening', () => {
     });
   });
 
+  it('normalizes checkout card input before sending sensitive data to Asaas', async () => {
+    const { normalizeCheckoutCardPaymentInput } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(normalizeCheckoutCardPaymentInput({
+      creditCard: {
+        holderName: '  Cliente Teste  ',
+        number: '4111 1111 1111 4444',
+        expiryMonth: '7',
+        expiryYear: '26',
+        ccv: '12 3',
+      },
+      holderInfo: {
+        name: '  Cliente Teste  ',
+        email: ' CLIENTE@EXEMPLO.COM ',
+        cpfCnpj: '060.465.885-02',
+        postalCode: '41.100-800',
+        addressNumber: ' 805 ',
+        phone: '(71) 99235-5913',
+      },
+    })).toEqual({
+      creditCard: {
+        holderName: 'Cliente Teste',
+        number: '4111111111114444',
+        expiryMonth: '07',
+        expiryYear: '2026',
+        ccv: '123',
+      },
+      holderInfo: {
+        name: 'Cliente Teste',
+        email: 'cliente@exemplo.com',
+        cpfCnpj: '06046588502',
+        postalCode: '41100800',
+        addressNumber: '805',
+        phone: '71992355913',
+      },
+    });
+  });
+
+  it('builds the subscription activation patch for an immediately paid initial checkout invoice', async () => {
+    const { buildImmediatePaidCheckoutEffects } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildImmediatePaidCheckoutEffects({
+      invoice: { purpose: 'subscription', pending_plan_id: null, subscription_id: 'sub_123' },
+      subscription: { id: 'sub_123', business_id: 'biz_123', plan_id: 'plan_123' },
+    })).toEqual({
+      action: 'activate_subscription',
+      subscription_id: 'sub_123',
+      business_id: 'biz_123',
+      plan_id: 'plan_123',
+    });
+  });
+
+  it('builds the pending plan change effect for an immediately paid upgrade invoice', async () => {
+    const { buildImmediatePaidCheckoutEffects } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildImmediatePaidCheckoutEffects({
+      invoice: { purpose: 'plan_change', pending_plan_id: 'plan_new', subscription_id: 'sub_123' },
+      subscription: { id: 'sub_123', business_id: 'biz_123', plan_id: 'plan_old' },
+    })).toEqual({
+      action: 'apply_pending_plan_change',
+      subscription_id: 'sub_123',
+    });
+  });
+
   it('treats pending billing states as current subscriptions to prevent duplicate signups', async () => {
     const { getCurrentSubscriptionStatuses } = await import('../../src/modules/platform-subscriptions/service.js');
 
