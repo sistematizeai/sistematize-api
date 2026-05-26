@@ -13,6 +13,7 @@ export interface Env {
   ASAAS_PLATFORM_API_KEY: string;
   ASAAS_PLATFORM_ENV: 'sandbox' | 'production';
   ASAAS_PLATFORM_WALLET_ID: string;
+  ASAAS_CARD_TOKENIZATION_ENABLED: boolean;
   CRON_SECRET: string;
   EMAIL_PROVIDER: 'resend' | 'smtp' | 'gmail_api';
   RESEND_API_KEY: string;
@@ -36,6 +37,12 @@ function requireEnv(name: string): string {
   return value;
 }
 
+function readBooleanEnv(name: string, defaultValue: boolean): boolean {
+  const value = process.env[name];
+  if (value == null || value === '') return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
 export function loadEnv(): Env {
   return {
     PORT: parseInt(process.env.PORT || '3001', 10),
@@ -52,6 +59,7 @@ export function loadEnv(): Env {
     ASAAS_PLATFORM_API_KEY: process.env.ASAAS_PLATFORM_API_KEY || '',
     ASAAS_PLATFORM_ENV: (process.env.ASAAS_PLATFORM_ENV || 'sandbox') as 'sandbox' | 'production',
     ASAAS_PLATFORM_WALLET_ID: process.env.ASAAS_PLATFORM_WALLET_ID || '',
+    ASAAS_CARD_TOKENIZATION_ENABLED: readBooleanEnv('ASAAS_CARD_TOKENIZATION_ENABLED', true),
     CRON_SECRET: process.env.CRON_SECRET || '',
     EMAIL_PROVIDER: (process.env.EMAIL_PROVIDER || 'resend') as 'resend' | 'smtp' | 'gmail_api',
     RESEND_API_KEY: process.env.RESEND_API_KEY || '',

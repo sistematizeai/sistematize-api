@@ -144,6 +144,34 @@ describe('Platform subscriptions hardening', () => {
     );
   });
 
+  it('builds checkout payment capabilities without direct card tokenization when disabled', async () => {
+    const { buildCheckoutPaymentCapabilities } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildCheckoutPaymentCapabilities({
+      invoice: {
+        pix_payload: '000201',
+        pix_qr_code: null,
+        bank_slip_url: 'https://www.asaas.com/b/pdf/pay_123',
+        invoice_url: 'https://www.asaas.com/i/pay_123',
+      },
+      cardTokenizationEnabled: false,
+    })).toEqual({
+      pix: true,
+      boleto: true,
+      card_tokenization: false,
+      hosted_card: true,
+    });
+  });
+
+  it('detects Asaas card tokenization permission errors', async () => {
+    const { isAsaasCardTokenizationPermissionError } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(isAsaasCardTokenizationPermissionError(
+      new Error('Voce nao possui permissao para utilizar este recurso. Entre em contato com seu gerente de contas.'),
+    )).toBe(true);
+    expect(isAsaasCardTokenizationPermissionError(new Error('Cartao de credito invalido.'))).toBe(false);
+  });
+
   it('stores only safe card metadata from Asaas tokenization', async () => {
     const { buildStoredPaymentMethodRecord } = await import('../../src/modules/platform-subscriptions/service.js');
 

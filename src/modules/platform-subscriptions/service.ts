@@ -81,6 +81,8 @@ const CURRENT_SUBSCRIPTION_STATUSES: PlatformSubscriptionStatus[] = [
 const RETRYABLE_INVOICE_STATUSES = ['pending', 'overdue', 'refused'];
 const PAYABLE_INVOICE_STATUSES = RETRYABLE_INVOICE_STATUSES;
 const BILLING_RETRY_DELAYS_DAYS = [1, 3, 5];
+const CARD_TOKENIZATION_UNAVAILABLE_MESSAGE =
+  'Pagamento direto com cartao ainda nao esta habilitado no Asaas. Use Pix, boleto ou a pagina segura do Asaas enquanto a tokenizacao e liberada.';
 const SECRET_METADATA_KEYS = new Set([
   'creditCardToken',
   'credit_card_token',
@@ -98,6 +100,42 @@ function getPlatformAsaas() {
     throw new AppError(503, 'Cobranca da plataforma nao configurada.', 'PLATFORM_BILLING_NOT_CONFIGURED');
   }
   return { apiKey: env.ASAAS_PLATFORM_API_KEY, environment: env.ASAAS_PLATFORM_ENV };
+}
+
+function normalizeComparableText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+export function isAsaasCardTokenizationPermissionError(error: unknown) {
+  const message = normalizeComparableText(error instanceof Error ? error.message : String(error || ''));
+  return (
+    (message.includes('nao possui permissao') || message.includes('do not have permission')) &&
+    (message.includes('gerente de contas') || message.includes('account manager') || message.includes('recurso'))
+  );
+}
+
+function buildCardTokenizationUnavailableError() {
+  return new AppError(422, CARD_TOKENIZATION_UNAVAILABLE_MESSAGE, 'ASAAS_CARD_TOKENIZATION_NOT_ENABLED');
+}
+
+export function buildCheckoutPaymentCapabilities(input: {
+  invoice: {
+    pix_payload?: string | null;
+    pix_qr_code?: string | null;
+    bank_slip_url?: string | null;
+    invoice_url?: string | null;
+  };
+  cardTokenizationEnabled: boolean;
+}) {
+  return {
+    pix: Boolean(input.invoice.pix_payload || input.invoice.pix_qr_code),
+    boleto: Boolean(input.invoice.bank_slip_url || input.invoice.invoice_url),
+    card_tokenization: input.cardTokenizationEnabled,
+    hosted_card: Boolean(input.invoice.invoice_url),
+  };
 }
 
 async function ensurePlatformCustomer(businessId: string): Promise<string> {
@@ -1137,6 +1175,7 @@ async function maybeRefreshInvoicePix(invoice: any) {
 }
 
 export async function getCheckoutInvoice(businessId: string, invoiceId: string) {
+  const env = loadEnv();
   const supabase = getSupabaseAdmin();
   const invoice = await maybeRefreshInvoicePix(await getOwnedInvoice(businessId, invoiceId));
   const paymentMethods = await listPaymentMethods(businessId);
@@ -1162,6 +1201,10 @@ export async function getCheckoutInvoice(businessId: string, invoiceId: string) 
     asaas_fallback_url: getAsaasPaymentUrl({
       invoiceUrl: invoice.invoice_url,
       bankSlipUrl: invoice.bank_slip_url,
+    }),
+    payment_capabilities: buildCheckoutPaymentCapabilities({
+      invoice,
+      cardTokenizationEnabled: env.ASAAS_CARD_TOKENIZATION_ENABLED,
     }),
   };
 }
@@ -1211,21 +1254,49 @@ export async function payCheckoutInvoiceWithCard(
     throw new AppError(409, 'Esta fatura nao esta pendente de pagamento.', 'INVOICE_NOT_PAYABLE');
   }
 
+  if (!loadEnv().ASAAS_CARD_TOKENIZATION_ENABLED) {
+    await recordBillingEvent({
+      businessId,
+      subscriptionId: invoice.subscription_id,
+      invoiceId: invoice.id,
+      eventType: 'card_tokenization_disabled',
+      severity: 'warn',
+      message: 'Tentativa de pagamento por cartao bloqueada porque a tokenizacao Asaas esta desabilitada.',
+    });
+    throw buildCardTokenizationUnavailableError();
+  }
+
   const normalizedInput = normalizeCheckoutCardPaymentInput(input);
   const customerId = await ensurePlatformCustomer(businessId);
   const { apiKey, environment } = getPlatformAsaas();
-  const tokenization = await asaasRequest<AsaasTokenizedCreditCard>({
-    apiKey,
-    environment,
-    path: '/creditCard/tokenizeCreditCard',
-    method: 'POST',
-    body: {
-      customer: customerId,
-      creditCard: normalizedInput.creditCard,
-      creditCardHolderInfo: normalizedInput.holderInfo,
-      remoteIp,
-    },
-  });
+  let tokenization: AsaasTokenizedCreditCard;
+  try {
+    tokenization = await asaasRequest<AsaasTokenizedCreditCard>({
+      apiKey,
+      environment,
+      path: '/creditCard/tokenizeCreditCard',
+      method: 'POST',
+      body: {
+        customer: customerId,
+        creditCard: normalizedInput.creditCard,
+        creditCardHolderInfo: normalizedInput.holderInfo,
+        remoteIp,
+      },
+    });
+  } catch (err) {
+    if (isAsaasCardTokenizationPermissionError(err)) {
+      await recordBillingEvent({
+        businessId,
+        subscriptionId: invoice.subscription_id,
+        invoiceId: invoice.id,
+        eventType: 'card_tokenization_unavailable',
+        severity: 'warn',
+        message: 'Asaas recusou a tokenizacao de cartao porque o recurso nao esta habilitado na conta de producao.',
+      });
+      throw buildCardTokenizationUnavailableError();
+    }
+    throw err;
+  }
 
   const storedMethod = buildStoredPaymentMethodRecord({
     businessId,
