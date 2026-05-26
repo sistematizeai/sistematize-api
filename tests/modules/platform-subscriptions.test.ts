@@ -167,4 +167,36 @@ describe('Platform subscriptions hardening', () => {
       is_default: true,
     });
   });
+
+  it('treats pending billing states as current subscriptions to prevent duplicate signups', async () => {
+    const { getCurrentSubscriptionStatuses } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(getCurrentSubscriptionStatuses()).toEqual([
+      'pending_payment',
+      'active',
+      'overdue',
+      'past_due',
+      'cancel_at_period_end',
+    ]);
+  });
+
+  it('builds a reusable checkout response for an existing pending invoice', async () => {
+    const { buildPendingInvoiceCheckoutResponse } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildPendingInvoiceCheckoutResponse({
+      id: 'inv_123',
+      invoice_url: 'https://www.asaas.com/i/inv_123',
+      bank_slip_url: 'https://www.asaas.com/b/pdf/inv_123',
+    })).toEqual({
+      reused: true,
+      pending: true,
+      payment_url: 'https://www.asaas.com/i/inv_123',
+      checkout_url: '/dashboard/checkout/inv_123',
+      invoice: {
+        id: 'inv_123',
+        invoice_url: 'https://www.asaas.com/i/inv_123',
+        bank_slip_url: 'https://www.asaas.com/b/pdf/inv_123',
+      },
+    });
+  });
 });

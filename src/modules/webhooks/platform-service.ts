@@ -53,11 +53,12 @@ export async function processPlatformWebhook(event: {
     pending_change_type?: string | null;
     pending_effective_at?: string | null;
   } | null = null;
+  let subscriptionPlanId: string | null = null;
 
   if (payment.subscription) {
     const { data: sub } = await supabase
       .from('platform_subscriptions')
-      .select('id, business_id, pending_change_type, pending_effective_at')
+      .select('id, business_id, plan_id, pending_change_type, pending_effective_at')
       .eq('asaas_subscription_id', payment.subscription)
       .maybeSingle();
 
@@ -65,6 +66,7 @@ export async function processPlatformWebhook(event: {
       businessId = sub.business_id;
       subscriptionId = sub.id;
       subscriptionPendingChange = sub;
+      subscriptionPlanId = sub.plan_id;
     }
   }
 
@@ -87,6 +89,15 @@ export async function processPlatformWebhook(event: {
 
   if (!businessId) {
     return { ignored: true, reason: 'business_not_found' };
+  }
+
+  if (subscriptionId && !subscriptionPlanId) {
+    const { data: subscription } = await supabase
+      .from('platform_subscriptions')
+      .select('plan_id')
+      .eq('id', subscriptionId)
+      .maybeSingle();
+    subscriptionPlanId = subscription?.plan_id || null;
   }
 
   // Upsert invoice record
@@ -128,7 +139,10 @@ export async function processPlatformWebhook(event: {
     }
     await supabase
       .from('businesses')
-      .update({ subscription_status: 'paid' })
+      .update({
+        subscription_status: 'paid',
+        ...(subscriptionPlanId ? { plan_id: subscriptionPlanId } : {}),
+      })
       .eq('id', businessId);
   }
 

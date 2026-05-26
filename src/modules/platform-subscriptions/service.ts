@@ -63,6 +63,17 @@ type UsageSnapshot = {
 
 type BusinessSubscriptionStatus = 'trial' | 'active' | 'paid' | 'overdue' | 'cancelled' | 'blocked';
 type PlanChangeType = 'upgrade' | 'downgrade' | 'same';
+type PlatformSubscriptionStatus = 'pending_payment' | 'active' | 'overdue' | 'past_due' | 'cancel_at_period_end';
+
+const CURRENT_SUBSCRIPTION_STATUSES: PlatformSubscriptionStatus[] = [
+  'pending_payment',
+  'active',
+  'overdue',
+  'past_due',
+  'cancel_at_period_end',
+];
+
+const PAYABLE_INVOICE_STATUSES = ['pending', 'overdue'];
 
 function getPlatformAsaas() {
   const env = loadEnv();
@@ -122,6 +133,10 @@ export function getAsaasPaymentUrl(payment: Pick<AsaasSubscriptionPayment, 'invo
   return payment?.invoiceUrl || payment?.bankSlipUrl || null;
 }
 
+export function getCurrentSubscriptionStatuses() {
+  return [...CURRENT_SUBSCRIPTION_STATUSES];
+}
+
 export function normalizePlatformInvoiceStatus(asaasStatus: string | null | undefined) {
   const map: Record<string, string> = {
     PENDING: 'pending',
@@ -167,6 +182,19 @@ export function buildPlatformInvoiceRecord(input: {
 
 export function buildSubscriptionCheckoutUrl(invoiceId: string) {
   return `/dashboard/checkout/${invoiceId}`;
+}
+
+export function buildPendingInvoiceCheckoutResponse(invoice: { id: string; invoice_url?: string | null; bank_slip_url?: string | null }) {
+  return {
+    reused: true,
+    pending: true,
+    payment_url: getAsaasPaymentUrl({
+      invoiceUrl: invoice.invoice_url || null,
+      bankSlipUrl: invoice.bank_slip_url || null,
+    }),
+    checkout_url: buildSubscriptionCheckoutUrl(invoice.id),
+    invoice,
+  };
 }
 
 function onlyDigits(value: string | null | undefined) {
@@ -215,6 +243,69 @@ async function upsertPlatformInvoice(record: Record<string, unknown>) {
 
   if (error) throw error;
   return data;
+}
+
+async function getLatestPayableInvoice(subscriptionId: string, filters?: {
+  purpose?: string;
+  pendingPlanId?: string;
+  pendingBillingCycle?: BillingCycle;
+}) {
+  const supabase = getSupabaseAdmin();
+  let query = supabase
+    .from('platform_invoices')
+    .select('*')
+    .eq('subscription_id', subscriptionId)
+    .in('status', PAYABLE_INVOICE_STATUSES)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (filters?.purpose) query = query.eq('purpose', filters.purpose);
+  if (filters?.pendingPlanId) query = query.eq('pending_plan_id', filters.pendingPlanId);
+  if (filters?.pendingBillingCycle) query = query.eq('pending_billing_cycle', filters.pendingBillingCycle);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+async function insertPlatformSubscriptionRecord(input: {
+  businessId: string;
+  planId: string;
+  asaasSubscriptionId: string;
+  billingCycle: BillingCycle;
+  value: number;
+  nextDueDate: string;
+}) {
+  const supabase = getSupabaseAdmin();
+  const baseRecord = {
+    business_id: input.businessId,
+    plan_id: input.planId,
+    asaas_subscription_id: input.asaasSubscriptionId,
+    billing_cycle: input.billingCycle,
+    value: input.value,
+    next_due_date: input.nextDueDate,
+  };
+
+  const firstAttempt = await supabase
+    .from('platform_subscriptions')
+    .insert({ ...baseRecord, status: 'pending_payment' })
+    .select('*')
+    .single();
+
+  if (!firstAttempt.error) return firstAttempt.data;
+
+  if ((firstAttempt.error as { code?: string }).code !== '23514') {
+    throw firstAttempt.error;
+  }
+
+  const fallback = await supabase
+    .from('platform_subscriptions')
+    .insert({ ...baseRecord, status: 'active' })
+    .select('*')
+    .single();
+
+  if (fallback.error) throw fallback.error;
+  return fallback.data;
 }
 
 export function resolveBusinessStatusAfterSubscriptionCreated(
@@ -327,6 +418,16 @@ export async function createSubscription(businessId: string, planId: string, bil
 
   const existing = await getActiveSubscription(businessId);
   if (existing) {
+    if (existing.status === 'pending_payment') {
+      const pendingInvoice = await getLatestPayableInvoice(existing.id);
+      if (pendingInvoice) {
+        return {
+          subscription: existing,
+          plan: existing.plan,
+          ...buildPendingInvoiceCheckoutResponse(pendingInvoice),
+        };
+      }
+    }
     throw new AppError(409, 'Ja existe uma assinatura ativa. Cancele ou faca upgrade.', 'SUBSCRIPTION_EXISTS');
   }
 
@@ -387,21 +488,14 @@ export async function createSubscription(businessId: string, planId: string, bil
   const firstPayment = paymentList.data?.[0] || null;
   const paymentUrl = getAsaasPaymentUrl(firstPayment);
 
-  const { data: record, error: insertError } = await supabase
-    .from('platform_subscriptions')
-    .insert({
-      business_id: businessId,
-      plan_id: planId,
-      asaas_subscription_id: sub.id,
-      billing_cycle: billingCycle,
-      value,
-      next_due_date: sub.nextDueDate || dueDateStr,
-      status: 'active',
-    })
-    .select('*')
-    .single();
-
-  if (insertError) throw insertError;
+  const record = await insertPlatformSubscriptionRecord({
+    businessId,
+    planId,
+    asaasSubscriptionId: sub.id,
+    billingCycle,
+    value,
+    nextDueDate: sub.nextDueDate || dueDateStr,
+  });
 
   let invoice = null;
   if (firstPayment?.id) {
@@ -415,15 +509,12 @@ export async function createSubscription(businessId: string, planId: string, bil
     }));
   }
 
-  await supabase
-    .from('businesses')
-    .update({
-      plan_id: planId,
-      subscription_status: resolveBusinessStatusAfterSubscriptionCreated(
-        businessStatus.subscription_status as BusinessSubscriptionStatus,
-      ),
-    })
-    .eq('id', businessId);
+  if (!['trial', 'blocked', 'overdue', 'cancelled'].includes(businessStatus.subscription_status)) {
+    await supabase
+      .from('businesses')
+      .update({ subscription_status: 'active' })
+      .eq('id', businessId);
+  }
 
   return {
     subscription: record,
@@ -441,7 +532,7 @@ export async function getActiveSubscription(businessId: string) {
     .from('platform_subscriptions')
     .select('*, plan:plans!platform_subscriptions_plan_id_fkey(id, name, description, price_monthly, price_yearly, max_collaborators, max_services, max_appointments_month)')
     .eq('business_id', businessId)
-    .in('status', ['active', 'overdue'])
+    .in('status', CURRENT_SUBSCRIPTION_STATUSES)
     .order('created_at', { ascending: false })
     .maybeSingle();
 
@@ -457,6 +548,13 @@ export async function upgradeSubscription(
 ) {
   const current = await getActiveSubscription(businessId);
   if (!current) throw new NotFoundError('Nenhuma assinatura ativa encontrada.');
+  if (current.status === 'pending_payment') {
+    const pendingInvoice = await getLatestPayableInvoice(current.id);
+    if (pendingInvoice) {
+      throw new AppError(409, 'Existe uma assinatura aguardando pagamento. Conclua a fatura pendente antes de trocar de plano.', 'SUBSCRIPTION_PAYMENT_PENDING');
+    }
+    throw new AppError(409, 'Existe uma assinatura aguardando pagamento.', 'SUBSCRIPTION_PAYMENT_PENDING');
+  }
 
   const supabase = getSupabaseAdmin();
   const { data: newPlan, error: planError } = await supabase
@@ -477,6 +575,33 @@ export async function upgradeSubscription(
   const changeType = classifyPlanChange(Number(current.value), Number(newValue));
   if (changeType === 'same' && current.plan_id === newPlanId && current.billing_cycle === billingCycle) {
     throw new AppError(409, 'Este plano ja esta ativo.', 'PLAN_ALREADY_ACTIVE');
+  }
+
+  if (changeType === 'upgrade') {
+    const samePendingInvoice = await getLatestPayableInvoice(current.id, {
+      purpose: 'plan_change',
+      pendingPlanId: newPlanId,
+      pendingBillingCycle: billingCycle,
+    });
+    if (samePendingInvoice) {
+      return {
+        success: true,
+        change_type: changeType,
+        effective_at: current.pending_effective_at || new Date().toISOString().split('T')[0],
+        plan: newPlan,
+        value: newValue,
+        billing_cycle: billingCycle,
+        ...buildPendingInvoiceCheckoutResponse(samePendingInvoice),
+      };
+    }
+
+    if (current.pending_change_type === 'upgrade' && current.pending_plan_id) {
+      throw new AppError(
+        409,
+        'Ja existe um upgrade pendente de pagamento. Pague ou cancele a fatura pendente antes de escolher outro plano.',
+        'PENDING_PLAN_CHANGE_EXISTS',
+      );
+    }
   }
 
   const effectiveDate = changeType === 'downgrade'
