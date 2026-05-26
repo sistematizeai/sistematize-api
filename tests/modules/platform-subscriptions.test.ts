@@ -423,6 +423,7 @@ describe('Platform subscriptions hardening', () => {
         business: { name: 'Studio "Prime", Centro', slug: 'studio-prime' },
         value: 99.9,
         status: 'refused',
+        operational_status: 'in_review',
         due_date: '2026-05-26',
         billing_type: 'CREDIT_CARD',
         retry_count: 2,
@@ -430,8 +431,34 @@ describe('Platform subscriptions hardening', () => {
       },
     ]);
 
-    expect(csv.split('\n')[0]).toBe('fatura,empresa,slug,valor,status,vencimento,forma_pagamento,tentativas,ultima_falha');
+    expect(csv.split('\n')[0]).toBe('fatura,empresa,slug,valor,status,analise_operacional,vencimento,forma_pagamento,tentativas,ultima_falha');
+    expect(csv).toContain('in_review');
     expect(csv).toContain('"Studio ""Prime"", Centro"');
     expect(csv).toContain('"Cartao recusado, tente outro"');
+  });
+
+  it('normalizes admin billing search text without keeping punctuation noise', async () => {
+    const { normalizeAdminBillingSearch } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(normalizeAdminBillingSearch('  Studio Prime  ')).toBe('Studio Prime');
+    expect(normalizeAdminBillingSearch('06.047.958/0001-50')).toBe('06047958000150');
+    expect(normalizeAdminBillingSearch('%_(),.\"')).toBe('');
+  });
+
+  it('builds an operational review patch without changing the financial status', async () => {
+    const { buildBillingInvoiceReviewPatch } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildBillingInvoiceReviewPatch({
+      reviewStatus: 'in_review',
+      note: 'Cliente pediu prazo ate sexta.',
+      reviewedBy: 'admin_123',
+      currentMetadata: { existing: true },
+    })).toEqual({
+      operational_status: 'in_review',
+      operational_note: 'Cliente pediu prazo ate sexta.',
+      operational_reviewed_by: 'admin_123',
+      operational_reviewed_at: expect.any(String),
+      operational_metadata: { existing: true },
+    });
   });
 });

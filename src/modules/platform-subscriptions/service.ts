@@ -559,6 +559,16 @@ function isDateOnly(value: string | null | undefined) {
   return !Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime());
 }
 
+export function normalizeAdminBillingSearch(value: string | null | undefined) {
+  const trimmed = (value || '').trim().replace(/\s+/g, ' ');
+  if (!trimmed) return '';
+
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length >= 5) return digits;
+
+  return trimmed.replace(/[%_\\(),."']/g, '').trim();
+}
+
 export function normalizeAdminBillingPeriodFilters(input: {
   dateFrom?: string | null;
   dateTo?: string | null;
@@ -582,6 +592,7 @@ export function buildBillingInvoicesCsv(rows: Array<Record<string, any>>) {
     'slug',
     'valor',
     'status',
+    'analise_operacional',
     'vencimento',
     'forma_pagamento',
     'tentativas',
@@ -594,6 +605,7 @@ export function buildBillingInvoicesCsv(rows: Array<Record<string, any>>) {
     row.business?.slug,
     row.value,
     row.status,
+    row.operational_status,
     row.due_date,
     row.billing_type,
     row.retry_count,
@@ -601,6 +613,22 @@ export function buildBillingInvoicesCsv(rows: Array<Record<string, any>>) {
   ].map(escapeCsvValue).join(','));
 
   return [headers.join(','), ...lines].join('\n');
+}
+
+export function buildBillingInvoiceReviewPatch(input: {
+  reviewStatus: 'none' | 'in_review';
+  note?: string | null;
+  reviewedBy: string;
+  currentMetadata?: Record<string, unknown> | null;
+}) {
+  const note = (input.note || '').trim();
+  return {
+    operational_status: input.reviewStatus,
+    operational_note: input.reviewStatus === 'in_review' ? note || null : null,
+    operational_reviewed_by: input.reviewedBy,
+    operational_reviewed_at: new Date().toISOString(),
+    operational_metadata: input.currentMetadata || {},
+  };
 }
 
 export function classifyPlanChange(currentValue: number, targetValue: number): PlanChangeType {
@@ -1665,9 +1693,93 @@ export async function adminGetRevenueStats() {
   };
 }
 
+async function findBillingBusinessIdsBySearch(search?: string) {
+  const normalized = normalizeAdminBillingSearch(search);
+  if (!normalized) return null;
+
+  const supabase = getSupabaseAdmin();
+  const digits = normalized.replace(/\D/g, '');
+  const ids = new Set<string>();
+
+  if (digits.length >= 5) {
+    const probe = digits.slice(0, 2);
+    const [businessResult, profileResult] = await Promise.all([
+      supabase
+        .from('businesses')
+        .select('id, cnpj')
+        .ilike('cnpj', `%${probe}%`)
+        .limit(250),
+      supabase
+        .from('profiles')
+        .select('id, document')
+        .ilike('document', `%${probe}%`)
+        .limit(250),
+    ]);
+
+    if (businessResult.error) throw businessResult.error;
+    if (profileResult.error) throw profileResult.error;
+
+    for (const business of businessResult.data || []) {
+      if (String(business.cnpj || '').replace(/\D/g, '').includes(digits)) ids.add(business.id);
+    }
+
+    const ownerIds = (profileResult.data || [])
+      .filter(profile => String(profile.document || '').replace(/\D/g, '').includes(digits))
+      .map(profile => profile.id);
+
+    if (ownerIds.length > 0) {
+      const { data, error } = await supabase
+        .from('businesses')
+        .select('id')
+        .in('owner_id', ownerIds)
+        .limit(500);
+
+      if (error) throw error;
+      for (const business of data || []) ids.add(business.id);
+    }
+
+    return [...ids];
+  }
+
+  const safe = normalized.slice(0, 80);
+  const [businessResult, profileResult] = await Promise.all([
+    supabase
+      .from('businesses')
+      .select('id')
+      .or(`name.ilike.%${safe}%,slug.ilike.%${safe}%,cnpj.ilike.%${safe}%`)
+      .limit(250),
+    supabase
+      .from('profiles')
+      .select('id')
+      .or(`full_name.ilike.%${safe}%,document.ilike.%${safe}%`)
+      .limit(250),
+  ]);
+
+  if (businessResult.error) throw businessResult.error;
+  if (profileResult.error) throw profileResult.error;
+
+  for (const business of businessResult.data || []) ids.add(business.id);
+  const ownerIds = (profileResult.data || []).map(profile => profile.id);
+
+  if (ownerIds.length > 0) {
+    const { data, error } = await supabase
+      .from('businesses')
+      .select('id')
+      .in('owner_id', ownerIds)
+      .limit(500);
+
+    if (error) throw error;
+    for (const business of data || []) ids.add(business.id);
+  }
+
+  return [...ids];
+}
+
 export async function adminListBillingInvoices(filters: {
   status?: string;
   businessId?: string;
+  search?: string;
+  operationalStatus?: string;
   dateFrom?: string;
   dateTo?: string;
   page?: number;
@@ -1704,10 +1816,15 @@ export async function adminListBillingInvoices(filters: {
       next_retry_at,
       last_retry_at,
       last_failure_message,
+      operational_status,
+      operational_note,
+      operational_reviewed_by,
+      operational_reviewed_at,
+      operational_metadata,
       payment_method_id,
       created_at,
       updated_at,
-      business:businesses(id, name, slug, subscription_status),
+      business:businesses(id, name, slug, cnpj, subscription_status),
       subscription:platform_subscriptions(id, status, billing_cycle, value, next_due_date),
       payment_method:platform_payment_methods(id, holder_name, card_brand, card_last4, is_default, status, failed_attempts, last_failure_message, last_used_at)
     `, { count: 'exact' })
@@ -1716,8 +1833,15 @@ export async function adminListBillingInvoices(filters: {
 
   if (filters.status) query = query.eq('status', filters.status);
   if (filters.businessId) query = query.eq('business_id', filters.businessId);
+  if (filters.operationalStatus) query = query.eq('operational_status', filters.operationalStatus);
   if (period.dateFrom) query = query.gte('due_date', period.dateFrom);
   if (period.dateTo) query = query.lte('due_date', period.dateTo);
+
+  const businessIds = await findBillingBusinessIdsBySearch(filters.search);
+  if (businessIds) {
+    if (businessIds.length === 0) return { data: [], total: 0, page, limit };
+    query = query.in('business_id', businessIds);
+  }
 
   const { data, error, count } = await query;
   if (error) throw error;
@@ -1727,6 +1851,8 @@ export async function adminListBillingInvoices(filters: {
 export async function adminExportBillingInvoicesCsv(filters: {
   status?: string;
   businessId?: string;
+  search?: string;
+  operationalStatus?: string;
   dateFrom?: string;
   dateTo?: string;
 }) {
@@ -1746,15 +1872,23 @@ export async function adminExportBillingInvoicesCsv(filters: {
       due_date,
       retry_count,
       last_failure_message,
-      business:businesses(name, slug)
+      operational_status,
+      business:businesses(name, slug, cnpj)
     `)
     .order('created_at', { ascending: false })
     .limit(5000);
 
   if (filters.status) query = query.eq('status', filters.status);
   if (filters.businessId) query = query.eq('business_id', filters.businessId);
+  if (filters.operationalStatus) query = query.eq('operational_status', filters.operationalStatus);
   if (period.dateFrom) query = query.gte('due_date', period.dateFrom);
   if (period.dateTo) query = query.lte('due_date', period.dateTo);
+
+  const businessIds = await findBillingBusinessIdsBySearch(filters.search);
+  if (businessIds) {
+    if (businessIds.length === 0) return buildBillingInvoicesCsv([]);
+    query = query.in('business_id', businessIds);
+  }
 
   const { data, error } = await query;
   if (error) throw error;
@@ -1764,6 +1898,7 @@ export async function adminExportBillingInvoicesCsv(filters: {
 export async function adminListBillingEvents(filters: {
   severity?: string;
   businessId?: string;
+  search?: string;
   invoiceId?: string;
   dateFrom?: string;
   dateTo?: string;
@@ -1804,6 +1939,12 @@ export async function adminListBillingEvents(filters: {
   if (filters.invoiceId) query = query.eq('invoice_id', filters.invoiceId);
   if (period.dateFrom) query = query.gte('created_at', `${period.dateFrom}T00:00:00.000Z`);
   if (period.dateTo) query = query.lte('created_at', `${period.dateTo}T23:59:59.999Z`);
+
+  const businessIds = await findBillingBusinessIdsBySearch(filters.search);
+  if (businessIds) {
+    if (businessIds.length === 0) return { data: [], total: 0, page, limit };
+    query = query.in('business_id', businessIds);
+  }
 
   const { data, error, count } = await query;
   if (error) throw error;
@@ -1867,4 +2008,49 @@ export async function adminRetryInvoiceWithDefaultCard(invoiceId: string) {
   if (!method) throw new NotFoundError('Nenhum cartao padrao ativo encontrado para esta empresa.');
 
   return payInvoiceWithStoredPaymentMethod(invoice.business_id, invoice, method, { automatic: false });
+}
+
+export async function adminUpdateBillingInvoiceReview(input: {
+  invoiceId: string;
+  reviewStatus: 'none' | 'in_review';
+  note?: string | null;
+  reviewedBy: string;
+}) {
+  const supabase = getSupabaseAdmin();
+  const { data: invoice, error } = await supabase
+    .from('platform_invoices')
+    .select('id, business_id, subscription_id, operational_metadata')
+    .eq('id', input.invoiceId)
+    .single();
+
+  if (error || !invoice) throw new NotFoundError('Fatura nao encontrada.');
+
+  const patch = buildBillingInvoiceReviewPatch({
+    reviewStatus: input.reviewStatus,
+    note: input.note,
+    reviewedBy: input.reviewedBy,
+    currentMetadata: invoice.operational_metadata || {},
+  });
+
+  const { data: updated, error: updateError } = await supabase
+    .from('platform_invoices')
+    .update(patch)
+    .eq('id', input.invoiceId)
+    .select('*')
+    .single();
+
+  if (updateError) throw updateError;
+
+  await recordBillingEvent({
+    businessId: invoice.business_id,
+    subscriptionId: invoice.subscription_id,
+    invoiceId: invoice.id,
+    eventType: input.reviewStatus === 'in_review' ? 'invoice_marked_in_review' : 'invoice_review_cleared',
+    message: input.reviewStatus === 'in_review'
+      ? 'Fatura marcada como em analise operacional.'
+      : 'Analise operacional da fatura removida.',
+    metadata: { note: patch.operational_note, reviewed_by: input.reviewedBy },
+  });
+
+  return updated;
 }

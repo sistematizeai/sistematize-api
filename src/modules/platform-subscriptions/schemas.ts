@@ -96,3 +96,16 @@ export const adminBillingInvoiceParamsSchema = {
     additionalProperties: false,
   },
 };
+
+export const adminBillingInvoiceReviewSchema = {
+  params: adminBillingInvoiceParamsSchema.params,
+  body: {
+    type: 'object' as const,
+    required: ['operational_status'],
+    properties: {
+      operational_status: { type: 'string', enum: ['none', 'in_review'] },
+      note: { type: ['string', 'null'], maxLength: 500 },
+    },
+    additionalProperties: false,
+  },
+};

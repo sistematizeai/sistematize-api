@@ -20,13 +20,15 @@ export async function adminRevenueHandler(_request: FastifyRequest, reply: Fasti
 }
 
 export async function adminBillingInvoicesHandler(
-  request: FastifyRequest<{ Querystring: { status?: string; business_id?: string; date_from?: string; date_to?: string; page?: string; limit?: string } }>,
+  request: FastifyRequest<{ Querystring: { status?: string; business_id?: string; search?: string; operational_status?: string; date_from?: string; date_to?: string; page?: string; limit?: string } }>,
   reply: FastifyReply,
 ) {
-  const { status, business_id, date_from, date_to, page, limit } = request.query;
+  const { status, business_id, search, operational_status, date_from, date_to, page, limit } = request.query;
   const result = await service.adminListBillingInvoices({
     status,
     businessId: business_id,
+    search,
+    operationalStatus: operational_status,
     dateFrom: date_from,
     dateTo: date_to,
     page: page ? Number(page) : undefined,
@@ -36,13 +38,15 @@ export async function adminBillingInvoicesHandler(
 }
 
 export async function adminBillingInvoicesExportHandler(
-  request: FastifyRequest<{ Querystring: { status?: string; business_id?: string; date_from?: string; date_to?: string } }>,
+  request: FastifyRequest<{ Querystring: { status?: string; business_id?: string; search?: string; operational_status?: string; date_from?: string; date_to?: string } }>,
   reply: FastifyReply,
 ) {
-  const { status, business_id, date_from, date_to } = request.query;
+  const { status, business_id, search, operational_status, date_from, date_to } = request.query;
   const csv = await service.adminExportBillingInvoicesCsv({
     status,
     businessId: business_id,
+    search,
+    operationalStatus: operational_status,
     dateFrom: date_from,
     dateTo: date_to,
   });
@@ -53,13 +57,14 @@ export async function adminBillingInvoicesExportHandler(
 }
 
 export async function adminBillingEventsHandler(
-  request: FastifyRequest<{ Querystring: { severity?: string; business_id?: string; invoice_id?: string; date_from?: string; date_to?: string; page?: string; limit?: string } }>,
+  request: FastifyRequest<{ Querystring: { severity?: string; business_id?: string; search?: string; invoice_id?: string; date_from?: string; date_to?: string; page?: string; limit?: string } }>,
   reply: FastifyReply,
 ) {
-  const { severity, business_id, invoice_id, date_from, date_to, page, limit } = request.query;
+  const { severity, business_id, search, invoice_id, date_from, date_to, page, limit } = request.query;
   const result = await service.adminListBillingEvents({
     severity,
     businessId: business_id,
+    search,
     invoiceId: invoice_id,
     dateFrom: date_from,
     dateTo: date_to,
@@ -79,6 +84,22 @@ export async function adminRetryBillingInvoiceHandler(
   reply: FastifyReply,
 ) {
   const result = await service.adminRetryInvoiceWithDefaultCard(request.params.invoiceId);
+  reply.send(result);
+}
+
+export async function adminBillingInvoiceReviewHandler(
+  request: FastifyRequest<{
+    Params: { invoiceId: string };
+    Body: { operational_status: 'none' | 'in_review'; note?: string | null };
+  }>,
+  reply: FastifyReply,
+) {
+  const result = await service.adminUpdateBillingInvoiceReview({
+    invoiceId: request.params.invoiceId,
+    reviewStatus: request.body.operational_status,
+    note: request.body.note,
+    reviewedBy: request.user.sub,
+  });
   reply.send(result);
 }
 

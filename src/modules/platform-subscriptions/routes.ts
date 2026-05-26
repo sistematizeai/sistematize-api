@@ -90,4 +90,9 @@ export async function platformSubscriptionRoutes(app: FastifyInstance) {
     schema: schemas.adminBillingInvoiceParamsSchema,
     config: { rateLimit: { max: 10, timeWindow: '10 minutes' } },
   }, routeHandler(handlers.adminRetryBillingInvoiceHandler));
+
+  app.patch('/api/admin/billing/invoices/:invoiceId/review', {
+    preHandler: [app.authenticate, app.requirePermission('finance.write'), app.requireSensitiveConfirmation],
+    schema: schemas.adminBillingInvoiceReviewSchema,
+  }, routeHandler(handlers.adminBillingInvoiceReviewHandler));
 }
