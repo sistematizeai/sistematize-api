@@ -10,6 +10,15 @@ describe('Platform webhook helpers', () => {
     expect(getBusinessSubscriptionStatusForPlatformEvent('PAYMENT_REFUNDED')).toBeNull();
   });
 
+  it('classifies reversal and refusal platform events for billing risk handling', async () => {
+    const { getPlatformBillingRiskAction } = await import('../../src/modules/webhooks/platform-service.js');
+
+    expect(getPlatformBillingRiskAction('PAYMENT_REFUNDED')).toBe('reversal');
+    expect(getPlatformBillingRiskAction('PAYMENT_CHARGEBACK_REQUESTED')).toBe('reversal');
+    expect(getPlatformBillingRiskAction('PAYMENT_DELETED')).toBe('deleted');
+    expect(getPlatformBillingRiskAction('PAYMENT_CREDIT_CARD_REFUSED')).toBe('card_refused');
+  });
+
   it('maps paid Asaas payment statuses to local invoice status', async () => {
     const { mapPlatformPaymentStatus, isPlatformPaymentConfirmed } = await import('../../src/modules/webhooks/platform-service.js');
 
@@ -24,6 +33,7 @@ describe('Platform webhook helpers', () => {
 
     expect(mapPlatformPaymentStatus('OVERDUE')).toBe('overdue');
     expect(mapPlatformPaymentStatus('CANCELLED')).toBe('cancelled');
+    expect(mapPlatformPaymentStatus('REFUSED')).toBe('refused');
     expect(isPlatformPaymentConfirmed('OVERDUE')).toBe(false);
   });
 

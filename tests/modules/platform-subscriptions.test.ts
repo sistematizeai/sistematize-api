@@ -164,6 +164,7 @@ describe('Platform subscriptions hardening', () => {
       holder_name: 'Cliente Teste',
       card_brand: 'VISA',
       card_last4: '4444',
+      status: 'active',
       is_default: true,
     });
   });
@@ -229,6 +230,93 @@ describe('Platform subscriptions hardening', () => {
     })).toEqual({
       action: 'apply_pending_plan_change',
       subscription_id: 'sub_123',
+    });
+  });
+
+  it('builds the Asaas subscription card update payload from a stored token', async () => {
+    const { buildAsaasSubscriptionCardUpdatePayload } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildAsaasSubscriptionCardUpdatePayload('tok_123', '201.10.20.30')).toEqual({
+      creditCardToken: 'tok_123',
+      remoteIp: '201.10.20.30',
+    });
+  });
+
+  it('sanitizes stored payment methods before returning them to the dashboard', async () => {
+    const { sanitizePaymentMethodForClient } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(sanitizePaymentMethodForClient({
+      id: 'pm_123',
+      holder_name: 'Cliente Teste',
+      card_brand: 'VISA',
+      card_last4: '4444',
+      is_default: true,
+      status: 'active',
+      created_at: '2026-05-26T00:00:00.000Z',
+      asaas_credit_card_token: 'tok_secret',
+    })).toEqual({
+      id: 'pm_123',
+      holder_name: 'Cliente Teste',
+      card_brand: 'VISA',
+      card_last4: '4444',
+      is_default: true,
+      status: 'active',
+      created_at: '2026-05-26T00:00:00.000Z',
+      updated_at: undefined,
+      last_used_at: null,
+    });
+  });
+
+  it('builds retry schedule using conservative D+1, D+3 and D+5 windows', async () => {
+    const { calculateBillingRetrySchedule } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(calculateBillingRetrySchedule(0, '2026-05-26T10:00:00.000Z')).toEqual({
+      retry_count: 1,
+      next_retry_at: '2026-05-27T10:00:00.000Z',
+      exhausted: false,
+    });
+
+    expect(calculateBillingRetrySchedule(2, '2026-05-26T10:00:00.000Z')).toEqual({
+      retry_count: 3,
+      next_retry_at: '2026-05-31T10:00:00.000Z',
+      exhausted: false,
+    });
+
+    expect(calculateBillingRetrySchedule(3, '2026-05-26T10:00:00.000Z')).toEqual({
+      retry_count: 3,
+      next_retry_at: null,
+      exhausted: true,
+    });
+  });
+
+  it('builds safe billing audit events without card secrets', async () => {
+    const { buildBillingEventRecord } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildBillingEventRecord({
+      businessId: 'biz_123',
+      subscriptionId: 'sub_123',
+      invoiceId: 'inv_123',
+      paymentMethodId: 'pm_123',
+      eventType: 'card_payment_failed',
+      severity: 'warn',
+      message: 'Pagamento recusado',
+      metadata: {
+        creditCardToken: 'tok_secret',
+        ccv: '123',
+        cardNumber: '4111111111114444',
+        reason: 'insufficient_funds',
+      },
+    })).toEqual({
+      business_id: 'biz_123',
+      subscription_id: 'sub_123',
+      invoice_id: 'inv_123',
+      payment_method_id: 'pm_123',
+      event_type: 'card_payment_failed',
+      severity: 'warn',
+      message: 'Pagamento recusado',
+      metadata: {
+        reason: 'insufficient_funds',
+      },
     });
   });
 

@@ -70,3 +70,18 @@ export const checkoutCardPaymentSchema = {
     additionalProperties: false,
   },
 };
+
+export const paymentMethodParamsSchema = {
+  params: {
+    type: 'object' as const,
+    required: ['paymentMethodId'],
+    properties: {
+      paymentMethodId: { type: 'string', format: 'uuid' },
+    },
+    additionalProperties: false,
+  },
+};
+
+export const checkoutSavedCardPaymentSchema = {
+  params: checkoutInvoiceSchema.params,
+};

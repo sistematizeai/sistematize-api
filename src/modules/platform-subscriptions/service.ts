@@ -79,6 +79,17 @@ const CURRENT_SUBSCRIPTION_STATUSES: PlatformSubscriptionStatus[] = [
 ];
 
 const PAYABLE_INVOICE_STATUSES = ['pending', 'overdue'];
+const BILLING_RETRY_DELAYS_DAYS = [1, 3, 5];
+const SECRET_METADATA_KEYS = new Set([
+  'creditCardToken',
+  'credit_card_token',
+  'asaas_credit_card_token',
+  'ccv',
+  'cvv',
+  'cardNumber',
+  'card_number',
+  'number',
+]);
 
 function getPlatformAsaas() {
   const env = loadEnv();
@@ -269,8 +280,130 @@ export function buildStoredPaymentMethodRecord(input: {
     holder_name: input.holderName,
     card_brand: input.tokenization.creditCardBrand || input.tokenization.brand || null,
     card_last4: resolveTokenizedCardLast4(input.tokenization, input.rawCardNumber),
+    status: 'active',
     is_default: true,
   };
+}
+
+export function buildAsaasSubscriptionCardUpdatePayload(creditCardToken: string, remoteIp?: string) {
+  return {
+    creditCardToken,
+    ...(remoteIp ? { remoteIp } : {}),
+  };
+}
+
+export function sanitizePaymentMethodForClient(method: Record<string, any>) {
+  return {
+    id: method.id,
+    holder_name: method.holder_name || null,
+    card_brand: method.card_brand || null,
+    card_last4: method.card_last4 || null,
+    is_default: Boolean(method.is_default),
+    status: method.status || 'active',
+    created_at: method.created_at,
+    updated_at: method.updated_at,
+    last_used_at: method.last_used_at || null,
+  };
+}
+
+export function calculateBillingRetrySchedule(currentRetryCount: number, now = new Date().toISOString()) {
+  const retryCount = Math.min(Math.max(0, Number(currentRetryCount) || 0) + 1, BILLING_RETRY_DELAYS_DAYS.length);
+  const exhausted = Number(currentRetryCount || 0) >= BILLING_RETRY_DELAYS_DAYS.length;
+  if (exhausted) {
+    return { retry_count: BILLING_RETRY_DELAYS_DAYS.length, next_retry_at: null, exhausted: true };
+  }
+
+  const delayDays = BILLING_RETRY_DELAYS_DAYS[retryCount - 1];
+  const nextRetry = new Date(now);
+  nextRetry.setUTCDate(nextRetry.getUTCDate() + delayDays);
+  return { retry_count: retryCount, next_retry_at: nextRetry.toISOString(), exhausted: false };
+}
+
+function sanitizeBillingMetadata(metadata: Record<string, any> | null | undefined): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(metadata || {})) {
+    if (SECRET_METADATA_KEYS.has(key)) continue;
+    if (typeof value === 'object' && value !== null) {
+      sanitized[key] = sanitizeBillingMetadata(value as Record<string, any>);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+export function buildBillingEventRecord(input: {
+  businessId: string;
+  subscriptionId?: string | null;
+  invoiceId?: string | null;
+  paymentMethodId?: string | null;
+  eventType: string;
+  severity?: 'info' | 'warn' | 'error';
+  message?: string | null;
+  metadata?: Record<string, any> | null;
+}) {
+  return {
+    business_id: input.businessId,
+    subscription_id: input.subscriptionId || null,
+    invoice_id: input.invoiceId || null,
+    payment_method_id: input.paymentMethodId || null,
+    event_type: input.eventType,
+    severity: input.severity || 'info',
+    message: input.message || null,
+    metadata: sanitizeBillingMetadata(input.metadata),
+  };
+}
+
+async function recordBillingEvent(input: Parameters<typeof buildBillingEventRecord>[0]) {
+  const supabase = getSupabaseAdmin();
+  try {
+    await supabase.from('platform_billing_events').insert(buildBillingEventRecord(input));
+  } catch {
+    // Billing should not fail because audit storage is unavailable during deploy rollout.
+  }
+}
+
+async function attachCreditCardTokenToAsaasSubscription(asaasSubscriptionId: string | null | undefined, creditCardToken: string, remoteIp?: string) {
+  if (!asaasSubscriptionId) return { attached: false, reason: 'missing_subscription' };
+  const { apiKey, environment } = getPlatformAsaas();
+  await asaasRequest({
+    apiKey,
+    environment,
+    path: `/subscriptions/${asaasSubscriptionId}/creditCard`,
+    method: 'PUT',
+    body: buildAsaasSubscriptionCardUpdatePayload(creditCardToken, remoteIp),
+  });
+  return { attached: true };
+}
+
+async function getSubscriptionForInvoice(invoice: any) {
+  if (!invoice.subscription_id) return null;
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('platform_subscriptions')
+    .select('id, business_id, plan_id, asaas_subscription_id')
+    .eq('id', invoice.subscription_id)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+async function getDefaultPaymentMethod(businessId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('platform_payment_methods')
+    .select('*')
+    .eq('business_id', businessId)
+    .eq('is_default', true)
+    .eq('status', 'active')
+    .is('disabled_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
 }
 
 export function buildImmediatePaidCheckoutEffects(input: {
@@ -893,6 +1026,7 @@ async function maybeRefreshInvoicePix(invoice: any) {
 export async function getCheckoutInvoice(businessId: string, invoiceId: string) {
   const supabase = getSupabaseAdmin();
   const invoice = await maybeRefreshInvoicePix(await getOwnedInvoice(businessId, invoiceId));
+  const paymentMethods = await listPaymentMethods(businessId);
 
   let subscription = null;
   if (invoice.subscription_id) {
@@ -910,6 +1044,8 @@ export async function getCheckoutInvoice(businessId: string, invoiceId: string) 
     invoice,
     subscription,
     checkout_url: buildSubscriptionCheckoutUrl(invoice.id),
+    payment_methods: paymentMethods.data,
+    default_payment_method: paymentMethods.data.find(method => method.is_default) || null,
     asaas_fallback_url: getAsaasPaymentUrl({
       invoiceUrl: invoice.invoice_url,
       bankSlipUrl: invoice.bank_slip_url,
@@ -993,7 +1129,10 @@ export async function payCheckoutInvoiceWithCard(
     card_last4: string | null;
     holder_name: string | null;
     is_default: boolean;
+    status?: string | null;
     created_at: string;
+    updated_at?: string | null;
+    last_used_at?: string | null;
   } | null = null;
 
   try {
@@ -1006,13 +1145,41 @@ export async function payCheckoutInvoiceWithCard(
     const { data, error } = await supabase
       .from('platform_payment_methods')
       .insert(storedMethod)
-      .select('id, card_brand, card_last4, holder_name, is_default, created_at')
+      .select('id, card_brand, card_last4, holder_name, is_default, status, created_at, updated_at, last_used_at')
       .single();
 
     if (error) throw error;
     paymentMethod = data;
   } catch {
     paymentMethod = null;
+  }
+
+  const subscriptionForCard = await getSubscriptionForInvoice(invoice);
+  try {
+    await attachCreditCardTokenToAsaasSubscription(
+      subscriptionForCard?.asaas_subscription_id,
+      storedMethod.asaas_credit_card_token,
+      remoteIp,
+    );
+    await recordBillingEvent({
+      businessId,
+      subscriptionId: invoice.subscription_id,
+      invoiceId: invoice.id,
+      paymentMethodId: paymentMethod?.id || null,
+      eventType: 'subscription_card_attached',
+      message: 'Cartao padrao vinculado a assinatura recorrente no Asaas.',
+      metadata: { card_brand: paymentMethod?.card_brand, card_last4: paymentMethod?.card_last4 },
+    });
+  } catch (err) {
+    await recordBillingEvent({
+      businessId,
+      subscriptionId: invoice.subscription_id,
+      invoiceId: invoice.id,
+      paymentMethodId: paymentMethod?.id || null,
+      eventType: 'subscription_card_attach_failed',
+      severity: 'warn',
+      message: err instanceof Error ? err.message : 'Falha ao vincular cartao recorrente no Asaas.',
+    });
   }
 
   const payment = await asaasRequest<AsaasSubscriptionPayment>({
@@ -1040,6 +1207,25 @@ export async function payCheckoutInvoiceWithCard(
 
   if (invoiceUpdateError) throw invoiceUpdateError;
   const paid = ['CONFIRMED', 'RECEIVED', 'confirmed', 'received'].includes(payment.status || '');
+  if (paymentMethod?.id) {
+    await supabase
+      .from('platform_payment_methods')
+      .update({
+        last_used_at: new Date().toISOString(),
+        failed_attempts: paid ? 0 : undefined,
+      })
+      .eq('id', paymentMethod.id);
+  }
+  await recordBillingEvent({
+    businessId,
+    subscriptionId: updatedInvoice.subscription_id,
+    invoiceId: updatedInvoice.id,
+    paymentMethodId: paymentMethod?.id || null,
+    eventType: paid ? 'card_payment_confirmed' : 'card_payment_submitted',
+    severity: paid ? 'info' : 'warn',
+    message: paid ? 'Pagamento por cartao confirmado.' : 'Pagamento por cartao enviado para confirmacao.',
+    metadata: { asaas_payment_status: payment.status, billing_type: payment.billingType },
+  });
   const effect = paid
     ? await applyImmediatePaidCheckoutEffects(businessId, updatedInvoice)
     : { action: 'waiting_confirmation' as const };
@@ -1047,10 +1233,260 @@ export async function payCheckoutInvoiceWithCard(
   return {
     success: true,
     invoice: updatedInvoice,
-    payment_method: paymentMethod,
+    payment_method: paymentMethod ? sanitizePaymentMethodForClient(paymentMethod) : null,
     paid,
     effect,
   };
+}
+
+export async function listPaymentMethods(businessId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('platform_payment_methods')
+    .select('id, holder_name, card_brand, card_last4, is_default, status, created_at, updated_at, last_used_at')
+    .eq('business_id', businessId)
+    .eq('status', 'active')
+    .is('disabled_at', null)
+    .order('is_default', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return { data: (data || []).map(sanitizePaymentMethodForClient) };
+}
+
+export async function setDefaultPaymentMethod(businessId: string, paymentMethodId: string, remoteIp?: string) {
+  const supabase = getSupabaseAdmin();
+  const { data: method, error } = await supabase
+    .from('platform_payment_methods')
+    .select('*')
+    .eq('id', paymentMethodId)
+    .eq('business_id', businessId)
+    .eq('status', 'active')
+    .is('disabled_at', null)
+    .single();
+
+  if (error || !method) throw new NotFoundError('Forma de pagamento nao encontrada.');
+
+  await supabase
+    .from('platform_payment_methods')
+    .update({ is_default: false })
+    .eq('business_id', businessId)
+    .eq('is_default', true);
+
+  const { data: updated, error: updateError } = await supabase
+    .from('platform_payment_methods')
+    .update({ is_default: true })
+    .eq('id', paymentMethodId)
+    .select('id, holder_name, card_brand, card_last4, is_default, status, created_at, updated_at, last_used_at')
+    .single();
+
+  if (updateError) throw updateError;
+
+  const current = await getActiveSubscription(businessId);
+  if (current?.asaas_subscription_id) {
+    try {
+      await attachCreditCardTokenToAsaasSubscription(current.asaas_subscription_id, method.asaas_credit_card_token, remoteIp);
+      await recordBillingEvent({
+        businessId,
+        subscriptionId: current.id,
+        paymentMethodId,
+        eventType: 'default_payment_method_attached',
+        message: 'Forma de pagamento padrao atualizada na assinatura recorrente.',
+      });
+    } catch (err) {
+      await recordBillingEvent({
+        businessId,
+        subscriptionId: current.id,
+        paymentMethodId,
+        eventType: 'default_payment_method_attach_failed',
+        severity: 'warn',
+        message: err instanceof Error ? err.message : 'Falha ao atualizar cartao padrao no Asaas.',
+      });
+    }
+  }
+
+  return sanitizePaymentMethodForClient(updated);
+}
+
+export async function disablePaymentMethod(businessId: string, paymentMethodId: string) {
+  const supabase = getSupabaseAdmin();
+  const defaultMethod = await getDefaultPaymentMethod(businessId);
+  if (defaultMethod?.id === paymentMethodId) {
+    const { data: openInvoices, error: invoiceError } = await supabase
+      .from('platform_invoices')
+      .select('id')
+      .eq('business_id', businessId)
+      .in('status', PAYABLE_INVOICE_STATUSES)
+      .limit(1);
+
+    if (invoiceError) throw invoiceError;
+    if ((openInvoices || []).length > 0) {
+      throw new AppError(409, 'Nao e possivel remover o cartao padrao com fatura pendente.', 'DEFAULT_CARD_HAS_OPEN_INVOICE');
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('platform_payment_methods')
+    .update({ status: 'disabled', disabled_at: new Date().toISOString(), is_default: false })
+    .eq('id', paymentMethodId)
+    .eq('business_id', businessId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) throw new NotFoundError('Forma de pagamento nao encontrada.');
+
+  await recordBillingEvent({
+    businessId,
+    paymentMethodId,
+    eventType: 'payment_method_disabled',
+    message: 'Forma de pagamento removida pelo usuario.',
+  });
+  return { success: true };
+}
+
+async function payInvoiceWithStoredPaymentMethod(
+  businessId: string,
+  invoice: any,
+  paymentMethod: any,
+  options?: { automatic?: boolean },
+) {
+  const { apiKey, environment } = getPlatformAsaas();
+  const supabase = getSupabaseAdmin();
+  const now = new Date().toISOString();
+
+  try {
+    const payment = await asaasRequest<AsaasSubscriptionPayment>({
+      apiKey,
+      environment,
+      path: `/payments/${invoice.asaas_payment_id}/payWithCreditCard`,
+      method: 'POST',
+      body: {
+        creditCardToken: paymentMethod.asaas_credit_card_token,
+      },
+    });
+
+    const paid = ['CONFIRMED', 'RECEIVED', 'confirmed', 'received'].includes(payment.status || '');
+    const { data: updatedInvoice, error: invoiceError } = await supabase
+      .from('platform_invoices')
+      .update({
+        billing_type: payment.billingType || 'CREDIT_CARD',
+        status: normalizePlatformInvoiceStatus(payment.status || invoice.status),
+        net_value: payment.netValue ?? invoice.net_value,
+        invoice_url: payment.invoiceUrl || invoice.invoice_url,
+        bank_slip_url: payment.bankSlipUrl || invoice.bank_slip_url,
+        payment_method_id: paymentMethod.id,
+        last_retry_at: now,
+        last_failure_message: paid ? null : invoice.last_failure_message || null,
+      })
+      .eq('id', invoice.id)
+      .select('*')
+      .single();
+
+    if (invoiceError) throw invoiceError;
+
+    await supabase
+      .from('platform_payment_methods')
+      .update({ last_used_at: now, failed_attempts: paid ? 0 : Number(paymentMethod.failed_attempts || 0) })
+      .eq('id', paymentMethod.id);
+
+    if (paid) await applyImmediatePaidCheckoutEffects(businessId, updatedInvoice);
+
+    await recordBillingEvent({
+      businessId,
+      subscriptionId: updatedInvoice.subscription_id,
+      invoiceId: updatedInvoice.id,
+      paymentMethodId: paymentMethod.id,
+      eventType: paid ? 'saved_card_payment_confirmed' : 'saved_card_payment_submitted',
+      message: options?.automatic ? 'Retentativa automatica com cartao salvo.' : 'Pagamento com cartao salvo enviado.',
+      metadata: { automatic: Boolean(options?.automatic), asaas_payment_status: payment.status },
+    });
+
+    return {
+      success: true,
+      paid,
+      invoice: updatedInvoice,
+      payment_method: sanitizePaymentMethodForClient(paymentMethod),
+    };
+  } catch (err) {
+    const schedule = calculateBillingRetrySchedule(Number(invoice.retry_count || 0), now);
+    const message = err instanceof Error ? err.message : 'Falha ao cobrar cartao salvo.';
+
+    await supabase
+      .from('platform_invoices')
+      .update({
+        retry_count: schedule.retry_count,
+        next_retry_at: schedule.next_retry_at,
+        last_retry_at: now,
+        last_failure_message: message,
+        payment_method_id: paymentMethod.id,
+        status: schedule.exhausted ? 'overdue' : invoice.status,
+      })
+      .eq('id', invoice.id);
+
+    await supabase
+      .from('platform_payment_methods')
+      .update({
+        failed_attempts: Number(paymentMethod.failed_attempts || 0) + 1,
+        last_failure_message: message,
+      })
+      .eq('id', paymentMethod.id);
+
+    await recordBillingEvent({
+      businessId,
+      subscriptionId: invoice.subscription_id,
+      invoiceId: invoice.id,
+      paymentMethodId: paymentMethod.id,
+      eventType: 'saved_card_payment_failed',
+      severity: schedule.exhausted ? 'error' : 'warn',
+      message,
+      metadata: { automatic: Boolean(options?.automatic), exhausted: schedule.exhausted },
+    });
+
+    if (options?.automatic) {
+      return { success: false, paid: false, error: message, retry: schedule };
+    }
+    throw err;
+  }
+}
+
+export async function payCheckoutInvoiceWithSavedCard(businessId: string, invoiceId: string) {
+  const invoice = await getOwnedInvoice(businessId, invoiceId);
+  if (!['pending', 'overdue', 'PENDING', 'OVERDUE'].includes(invoice.status)) {
+    throw new AppError(409, 'Esta fatura nao esta pendente de pagamento.', 'INVOICE_NOT_PAYABLE');
+  }
+
+  const method = await getDefaultPaymentMethod(businessId);
+  if (!method) throw new NotFoundError('Nenhum cartao padrao ativo encontrado.');
+
+  return payInvoiceWithStoredPaymentMethod(businessId, invoice, method);
+}
+
+export async function retryDuePlatformCardPayments(now = new Date().toISOString(), limit = 50) {
+  const supabase = getSupabaseAdmin();
+  const { data: invoices, error } = await supabase
+    .from('platform_invoices')
+    .select('*')
+    .in('status', PAYABLE_INVOICE_STATUSES)
+    .or(`next_retry_at.is.null,next_retry_at.lte.${now}`)
+    .lt('retry_count', BILLING_RETRY_DELAYS_DAYS.length)
+    .order('due_date', { ascending: true })
+    .limit(Math.min(Math.max(limit, 1), 100));
+
+  if (error) throw error;
+
+  const results: Array<Record<string, any>> = [];
+  for (const invoice of invoices || []) {
+    const method = await getDefaultPaymentMethod(invoice.business_id);
+    if (!method) {
+      results.push({ invoice_id: invoice.id, skipped: true, reason: 'no_default_payment_method' });
+      continue;
+    }
+    const result = await payInvoiceWithStoredPaymentMethod(invoice.business_id, invoice, method, { automatic: true });
+    results.push({ invoice_id: invoice.id, ...result });
+  }
+
+  return { processed: results.length, results };
 }
 
 export async function listInvoices(businessId: string, filters: { status?: string; page?: number; limit?: number }) {

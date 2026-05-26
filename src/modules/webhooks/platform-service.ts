@@ -166,6 +166,26 @@ export async function processPlatformWebhook(event: {
       .eq('asaas_payment_id', payment.id);
   }
 
+  const riskAction = getPlatformBillingRiskAction(event.event);
+  if (riskAction === 'reversal' && subscriptionId) {
+    await supabase
+      .from('platform_subscriptions')
+      .update({ status: 'past_due' })
+      .eq('id', subscriptionId);
+
+    await supabase
+      .from('businesses')
+      .update({ subscription_status: 'overdue' })
+      .eq('id', businessId);
+  }
+
+  if (riskAction === 'card_refused') {
+    await supabase
+      .from('platform_invoices')
+      .update({ status: 'refused' })
+      .eq('asaas_payment_id', payment.id);
+  }
+
   return { received: true };
 }
 
@@ -191,6 +211,7 @@ export function mapPlatformPaymentStatus(asaasStatus: string): string {
     DELETED: 'deleted',
     CANCELLED: 'cancelled',
     RECEIVED_IN_CASH: 'received',
+    REFUSED: 'refused',
   };
   return map[asaasStatus] || 'pending';
 }
@@ -206,6 +227,28 @@ export function getBusinessSubscriptionStatusForPlatformEvent(eventName: string)
 
   if (eventName === 'PAYMENT_OVERDUE') {
     return 'overdue';
+  }
+
+  return null;
+}
+
+export function getPlatformBillingRiskAction(eventName: string): 'reversal' | 'deleted' | 'card_refused' | null {
+  if ([
+    'PAYMENT_REFUNDED',
+    'PAYMENT_CHARGEBACK_REQUESTED',
+    'PAYMENT_CHARGEBACK_DISPUTE',
+    'PAYMENT_AWAITING_CHARGEBACK_REVERSAL',
+  ].includes(eventName)) {
+    return 'reversal';
+  }
+
+  if (eventName === 'PAYMENT_DELETED') return 'deleted';
+
+  if ([
+    'PAYMENT_CREDIT_CARD_REFUSED',
+    'PAYMENT_REFUSED',
+  ].includes(eventName)) {
+    return 'card_refused';
   }
 
   return null;

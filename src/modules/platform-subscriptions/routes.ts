@@ -38,6 +38,28 @@ export async function platformSubscriptionRoutes(app: FastifyInstance) {
     config: { rateLimit: { max: 5, timeWindow: '10 minutes' } },
   }, routeHandler(handlers.checkoutCardPaymentHandler));
 
+  app.post('/api/subscription/checkout/:invoiceId/pay-saved-card', {
+    preHandler: [app.authenticate],
+    schema: schemas.checkoutSavedCardPaymentSchema,
+    config: { rateLimit: { max: 5, timeWindow: '10 minutes' } },
+  }, routeHandler(handlers.checkoutSavedCardPaymentHandler));
+
+  app.get('/api/subscription/payment-methods', {
+    preHandler: [app.authenticate],
+  }, routeHandler(handlers.paymentMethodsHandler));
+
+  app.post('/api/subscription/payment-methods/:paymentMethodId/default', {
+    preHandler: [app.authenticate],
+    schema: schemas.paymentMethodParamsSchema,
+    config: { rateLimit: { max: 10, timeWindow: '10 minutes' } },
+  }, routeHandler(handlers.setDefaultPaymentMethodHandler));
+
+  app.delete('/api/subscription/payment-methods/:paymentMethodId', {
+    preHandler: [app.authenticate],
+    schema: schemas.paymentMethodParamsSchema,
+    config: { rateLimit: { max: 10, timeWindow: '10 minutes' } },
+  }, routeHandler(handlers.disablePaymentMethodHandler));
+
   // Admin-only endpoints
   app.get('/api/admin/subscriptions', {
     preHandler: [app.authenticate, app.requirePermission('finance.read')],

@@ -3,6 +3,7 @@ import { processAsaasWebhook } from './service.js';
 import { processPlatformWebhook } from './platform-service.js';
 import { blockExpiredTrials } from '../businesses/service.js';
 import { sendPendingReminders, sendTrialNotifications } from '../notifications/service.js';
+import { retryDuePlatformCardPayments } from '../platform-subscriptions/service.js';
 
 type CronEnv = {
   NODE_ENV?: string;
@@ -113,6 +114,21 @@ export async function webhookRoutes(app: FastifyInstance) {
       return reply.send(result);
     } catch (err) {
       request.log.error({ err, request_id: request.id }, 'Erro no cron de lembretes');
+      return reply.status(500).send({ error: 'Erro interno', request_id: request.id });
+    }
+  });
+
+  app.post('/cron/retry-platform-billing', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    try {
+      const cronSecret = request.headers['x-cron-secret'] as string | undefined;
+      const cronError = validateCronRequest(cronSecret);
+      if (cronError) return reply.status(cronError.statusCode).send({ ...cronError.body, request_id: request.id });
+      const result = await retryDuePlatformCardPayments();
+      return reply.send(result);
+    } catch (err) {
+      request.log.error({ err, request_id: request.id }, 'Erro no cron de retentativa de cobranca da plataforma');
       return reply.status(500).send({ error: 'Erro interno', request_id: request.id });
     }
   });

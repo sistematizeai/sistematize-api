@@ -127,3 +127,36 @@ export async function checkoutCardPaymentHandler(
   );
   reply.send(result);
 }
+
+export async function checkoutSavedCardPaymentHandler(
+  request: FastifyRequest<{ Params: { invoiceId: string } }>,
+  reply: FastifyReply,
+) {
+  const businessId = request.user.business_id!;
+  const result = await service.payCheckoutInvoiceWithSavedCard(businessId, request.params.invoiceId);
+  reply.send(result);
+}
+
+export async function paymentMethodsHandler(request: FastifyRequest, reply: FastifyReply) {
+  const businessId = request.user.business_id!;
+  const result = await service.listPaymentMethods(businessId);
+  reply.send(result);
+}
+
+export async function setDefaultPaymentMethodHandler(
+  request: FastifyRequest<{ Params: { paymentMethodId: string } }>,
+  reply: FastifyReply,
+) {
+  const businessId = request.user.business_id!;
+  const result = await service.setDefaultPaymentMethod(businessId, request.params.paymentMethodId, request.ip);
+  reply.send(result);
+}
+
+export async function disablePaymentMethodHandler(
+  request: FastifyRequest<{ Params: { paymentMethodId: string } }>,
+  reply: FastifyReply,
+) {
+  const businessId = request.user.business_id!;
+  const result = await service.disablePaymentMethod(businessId, request.params.paymentMethodId);
+  reply.send(result);
+}
