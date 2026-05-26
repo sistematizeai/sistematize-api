@@ -30,6 +30,7 @@ type UsageSnapshot = {
 };
 
 type BusinessSubscriptionStatus = 'trial' | 'active' | 'paid' | 'overdue' | 'cancelled' | 'blocked';
+type PlanChangeType = 'upgrade' | 'downgrade' | 'same';
 
 function getPlatformAsaas() {
   const env = loadEnv();
@@ -119,6 +120,23 @@ export function resolveBusinessStatusAfterSubscriptionCreated(
   }
 
   return 'active';
+}
+
+function roundCurrency(value: number) {
+  return Math.round(Number(value) * 100) / 100;
+}
+
+export function classifyPlanChange(currentValue: number, targetValue: number): PlanChangeType {
+  const current = roundCurrency(currentValue);
+  const target = roundCurrency(targetValue);
+
+  if (target > current) return 'upgrade';
+  if (target < current) return 'downgrade';
+  return 'same';
+}
+
+export function calculateImmediateUpgradeCharge(currentValue: number, targetValue: number) {
+  return Math.max(0, roundCurrency(roundCurrency(targetValue) - roundCurrency(currentValue)));
 }
 
 export function assertPlanCoversUsageSnapshot(plan: PlanLimits, usage: UsageSnapshot) {
@@ -318,7 +336,12 @@ export async function getActiveSubscription(businessId: string) {
   return data;
 }
 
-export async function upgradeSubscription(businessId: string, newPlanId: string, newBillingCycle?: BillingCycle) {
+export async function upgradeSubscription(
+  businessId: string,
+  newPlanId: string,
+  newBillingCycle?: BillingCycle,
+  billingType: AsaasBillingType = 'UNDEFINED',
+) {
   const current = await getActiveSubscription(businessId);
   if (!current) throw new NotFoundError('Nenhuma assinatura ativa encontrada.');
 
@@ -337,32 +360,158 @@ export async function upgradeSubscription(businessId: string, newPlanId: string,
   validateSubscriptionValue(newValue);
   await assertPlanCoversCurrentBusinessUsage(businessId, newPlan);
 
-  const cycle = billingCycle === 'yearly' ? 'YEARLY' : 'MONTHLY';
-
   const { apiKey, environment } = getPlatformAsaas();
-  await asaasRequest({
-    apiKey,
-    environment,
-    path: `/subscriptions/${current.asaas_subscription_id}`,
-    method: 'PUT',
-    body: {
-      value: newValue,
-      cycle,
-      description: `Sistematize - Plano ${newPlan.name} (${billingCycle === 'yearly' ? 'anual' : 'mensal'})`,
-    },
-  });
+  const changeType = classifyPlanChange(Number(current.value), Number(newValue));
+  if (changeType === 'same' && current.plan_id === newPlanId && current.billing_cycle === billingCycle) {
+    throw new AppError(409, 'Este plano ja esta ativo.', 'PLAN_ALREADY_ACTIVE');
+  }
+
+  const effectiveDate = changeType === 'downgrade'
+    ? (current.next_due_date || new Date().toISOString().split('T')[0])
+    : new Date().toISOString().split('T')[0];
 
   await supabase
     .from('platform_subscriptions')
-    .update({ plan_id: newPlanId, billing_cycle: billingCycle, value: newValue })
+    .update({
+      pending_plan_id: newPlanId,
+      pending_billing_cycle: billingCycle,
+      pending_value: newValue,
+      pending_change_type: changeType,
+      pending_effective_at: effectiveDate,
+    })
     .eq('id', current.id);
+
+  if (changeType === 'downgrade') {
+    await updateAsaasRecurringSubscription(current.asaas_subscription_id, newPlan, billingCycle, newValue);
+    return {
+      success: true,
+      pending: true,
+      change_type: changeType,
+      effective_at: effectiveDate,
+      plan: newPlan,
+      value: newValue,
+      billing_cycle: billingCycle,
+      payment_url: null,
+    };
+  }
+
+  const customerId = await ensurePlatformCustomer(businessId);
+  const chargeValue = calculateImmediateUpgradeCharge(Number(current.value), Number(newValue));
+  validateSubscriptionValue(chargeValue);
+  const dueDate = new Date().toISOString().split('T')[0];
+  const payment = await asaasRequest<AsaasSubscriptionPayment>({
+    apiKey,
+    environment,
+    path: '/payments',
+    method: 'POST',
+    body: {
+      customer: customerId,
+      billingType,
+      value: chargeValue,
+      dueDate,
+      description: `Sistematize - Upgrade para Plano ${newPlan.name}`,
+      externalReference: `plan-change:${current.id}:${newPlanId}`,
+    },
+  });
+
+  if (payment?.id) {
+    await supabase.from('platform_invoices').upsert({
+      ...buildPlatformInvoiceRecord({
+        businessId,
+        subscriptionId: current.id,
+        payment,
+        fallbackValue: chargeValue,
+        fallbackDueDate: dueDate,
+        requestedBillingType: billingType,
+      }),
+      purpose: 'plan_change',
+      pending_plan_id: newPlanId,
+      pending_billing_cycle: billingCycle,
+    }, { onConflict: 'asaas_payment_id' });
+  }
+
+  return {
+    success: true,
+    pending: true,
+    change_type: changeType,
+    effective_at: effectiveDate,
+    plan: newPlan,
+    value: newValue,
+    billing_cycle: billingCycle,
+    payment_url: getAsaasPaymentUrl(payment),
+    payment,
+  };
+}
+
+async function updateAsaasRecurringSubscription(
+  asaasSubscriptionId: string,
+  plan: { name: string },
+  billingCycle: BillingCycle,
+  value: number,
+) {
+  const cycle = billingCycle === 'yearly' ? 'YEARLY' : 'MONTHLY';
+  const { apiKey, environment } = getPlatformAsaas();
+
+  await asaasRequest({
+    apiKey,
+    environment,
+    path: `/subscriptions/${asaasSubscriptionId}`,
+    method: 'PUT',
+    body: {
+      value,
+      cycle,
+      description: `Sistematize - Plano ${plan.name} (${billingCycle === 'yearly' ? 'anual' : 'mensal'})`,
+    },
+  });
+}
+
+export async function applyPendingPlanChange(subscriptionId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data: subscription, error } = await supabase
+    .from('platform_subscriptions')
+    .select('id, business_id, asaas_subscription_id, pending_plan_id, pending_billing_cycle, pending_value, pending_change_type, pending_plan:plans!platform_subscriptions_pending_plan_id_fkey(id, name)')
+    .eq('id', subscriptionId)
+    .single();
+
+  if (error) throw error;
+  if (!subscription?.pending_plan_id || !subscription.pending_billing_cycle || !subscription.pending_value) {
+    return { applied: false, reason: 'no_pending_change' };
+  }
+
+  const pendingPlan = Array.isArray(subscription.pending_plan)
+    ? subscription.pending_plan[0]
+    : subscription.pending_plan;
+
+  if (!pendingPlan) throw new NotFoundError('Plano pendente nao encontrado.');
+
+  await updateAsaasRecurringSubscription(
+    subscription.asaas_subscription_id,
+    pendingPlan,
+    subscription.pending_billing_cycle,
+    Number(subscription.pending_value),
+  );
+
+  await supabase
+    .from('platform_subscriptions')
+    .update({
+      plan_id: subscription.pending_plan_id,
+      billing_cycle: subscription.pending_billing_cycle,
+      value: subscription.pending_value,
+      pending_plan_id: null,
+      pending_billing_cycle: null,
+      pending_value: null,
+      pending_change_type: null,
+      pending_effective_at: null,
+      status: 'active',
+    })
+    .eq('id', subscription.id);
 
   await supabase
     .from('businesses')
-    .update({ plan_id: newPlanId, subscription_status: 'active' })
-    .eq('id', businessId);
+    .update({ plan_id: subscription.pending_plan_id, subscription_status: 'paid' })
+    .eq('id', subscription.business_id);
 
-  return { success: true, plan: newPlan, value: newValue, billing_cycle: billingCycle };
+  return { applied: true, change_type: subscription.pending_change_type };
 }
 
 export async function cancelSubscription(businessId: string) {

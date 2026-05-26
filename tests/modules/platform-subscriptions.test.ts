@@ -72,6 +72,21 @@ describe('Platform subscriptions hardening', () => {
     expect(resolveBusinessStatusAfterSubscriptionCreated('active')).toBe('active');
   });
 
+  it('classifies plan changes by selected billing value', async () => {
+    const { classifyPlanChange } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(classifyPlanChange(99.9, 199.9)).toBe('upgrade');
+    expect(classifyPlanChange(199.9, 99.9)).toBe('downgrade');
+    expect(classifyPlanChange(99.9, 99.9)).toBe('same');
+  });
+
+  it('charges only the immediate increase when upgrading a plan', async () => {
+    const { calculateImmediateUpgradeCharge } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(calculateImmediateUpgradeCharge(99.9, 199.9)).toBe(100);
+    expect(calculateImmediateUpgradeCharge(199.9, 99.9)).toBe(0);
+  });
+
   it('rejects a plan that does not cover the current business usage', async () => {
     const { assertPlanCoversUsageSnapshot } = await import('../../src/modules/platform-subscriptions/service.js');
 

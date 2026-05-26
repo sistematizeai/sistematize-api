@@ -41,12 +41,12 @@ export async function currentHandler(request: FastifyRequest, reply: FastifyRepl
 }
 
 export async function upgradeHandler(
-  request: FastifyRequest<{ Body: { plan_id: string; billing_cycle?: 'monthly' | 'yearly' } }>,
+  request: FastifyRequest<{ Body: { plan_id: string; billing_cycle?: 'monthly' | 'yearly'; billing_type?: string } }>,
   reply: FastifyReply,
 ) {
   const businessId = request.user.business_id!;
-  const { plan_id, billing_cycle } = request.body;
-  const result = await service.upgradeSubscription(businessId, plan_id, billing_cycle);
+  const { plan_id, billing_cycle, billing_type } = request.body;
+  const result = await service.upgradeSubscription(businessId, plan_id, billing_cycle, billing_type as any);
   reply.send(result);
 }
 

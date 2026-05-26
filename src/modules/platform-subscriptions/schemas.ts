@@ -18,6 +18,7 @@ export const upgradeSchema = {
     properties: {
       plan_id: { type: 'string', format: 'uuid' },
       billing_cycle: { type: 'string', enum: ['monthly', 'yearly'] },
+      billing_type: { type: 'string', enum: ['PIX', 'BOLETO', 'CREDIT_CARD', 'UNDEFINED'], default: 'UNDEFINED' },
     },
     additionalProperties: false,
   },

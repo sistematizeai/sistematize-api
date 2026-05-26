@@ -26,4 +26,23 @@ describe('Platform webhook helpers', () => {
     expect(mapPlatformPaymentStatus('CANCELLED')).toBe('cancelled');
     expect(isPlatformPaymentConfirmed('OVERDUE')).toBe(false);
   });
+
+  it('applies paid upgrade invoices immediately but waits for downgrade effective date', async () => {
+    const { shouldApplyPendingPlanChange } = await import('../../src/modules/webhooks/platform-service.js');
+
+    expect(shouldApplyPendingPlanChange({
+      pending_change_type: 'upgrade',
+      pending_effective_at: '2026-06-26',
+    }, '2026-05-26')).toBe(true);
+
+    expect(shouldApplyPendingPlanChange({
+      pending_change_type: 'downgrade',
+      pending_effective_at: '2026-06-26',
+    }, '2026-05-26')).toBe(false);
+
+    expect(shouldApplyPendingPlanChange({
+      pending_change_type: 'downgrade',
+      pending_effective_at: '2026-06-26',
+    }, '2026-06-26')).toBe(true);
+  });
 });

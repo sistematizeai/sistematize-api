@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
+import { applyPendingPlanChange } from '../platform-subscriptions/service.js';
 
 export async function processPlatformWebhook(event: {
   id: string;
@@ -48,30 +49,39 @@ export async function processPlatformWebhook(event: {
   // Try to find by subscription first, then by payment
   let businessId: string | null = null;
   let subscriptionId: string | null = null;
+  let subscriptionPendingChange: {
+    pending_change_type?: string | null;
+    pending_effective_at?: string | null;
+  } | null = null;
 
   if (payment.subscription) {
     const { data: sub } = await supabase
       .from('platform_subscriptions')
-      .select('id, business_id')
+      .select('id, business_id, pending_change_type, pending_effective_at')
       .eq('asaas_subscription_id', payment.subscription)
       .maybeSingle();
 
     if (sub) {
       businessId = sub.business_id;
       subscriptionId = sub.id;
+      subscriptionPendingChange = sub;
     }
   }
 
+  let invoicePendingPlanId: string | null = null;
+  let invoicePurpose: string | null = null;
   if (!businessId) {
     const { data: inv } = await supabase
       .from('platform_invoices')
-      .select('business_id, subscription_id')
+      .select('business_id, subscription_id, purpose, pending_plan_id')
       .eq('asaas_payment_id', payment.id)
       .maybeSingle();
 
     if (inv) {
       businessId = inv.business_id;
       subscriptionId = inv.subscription_id;
+      invoicePurpose = inv.purpose;
+      invoicePendingPlanId = inv.pending_plan_id;
     }
   }
 
@@ -101,6 +111,15 @@ export async function processPlatformWebhook(event: {
 
   // Update subscription and business status
   if (nextBusinessStatus === 'paid') {
+    const shouldApplyPending = Boolean(subscriptionId) && (
+      (invoicePurpose === 'plan_change' && invoicePendingPlanId)
+      || shouldApplyPendingPlanChange(subscriptionPendingChange, payment.paymentDate || new Date().toISOString())
+    );
+
+    if (subscriptionId && shouldApplyPending) {
+      await applyPendingPlanChange(subscriptionId);
+    }
+
     if (subscriptionId) {
       await supabase
         .from('platform_subscriptions')
@@ -134,6 +153,18 @@ export async function processPlatformWebhook(event: {
   }
 
   return { received: true };
+}
+
+export function shouldApplyPendingPlanChange(
+  subscription: { pending_change_type?: string | null; pending_effective_at?: string | null } | null,
+  paidAt: string,
+): boolean {
+  if (!subscription?.pending_change_type || !subscription.pending_effective_at) return false;
+  if (subscription.pending_change_type === 'upgrade') return true;
+
+  const effectiveDate = subscription.pending_effective_at.slice(0, 10);
+  const paidDate = paidAt.slice(0, 10);
+  return subscription.pending_change_type === 'downgrade' && paidDate >= effectiveDate;
 }
 
 export function mapPlatformPaymentStatus(asaasStatus: string): string {
