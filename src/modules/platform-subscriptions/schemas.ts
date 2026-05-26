@@ -85,3 +85,14 @@ export const paymentMethodParamsSchema = {
 export const checkoutSavedCardPaymentSchema = {
   params: checkoutInvoiceSchema.params,
 };
+
+export const adminBillingInvoiceParamsSchema = {
+  params: {
+    type: 'object' as const,
+    required: ['invoiceId'],
+    properties: {
+      invoiceId: { type: 'string', format: 'uuid' },
+    },
+    additionalProperties: false,
+  },
+};

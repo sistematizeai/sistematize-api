@@ -68,4 +68,22 @@ export async function platformSubscriptionRoutes(app: FastifyInstance) {
   app.get('/api/admin/subscriptions/stats', {
     preHandler: [app.authenticate, app.requirePermission('finance.read')],
   }, routeHandler(handlers.adminRevenueHandler));
+
+  app.get('/api/admin/billing/operations', {
+    preHandler: [app.authenticate, app.requirePermission('finance.read')],
+  }, routeHandler(handlers.adminBillingOperationsHandler));
+
+  app.get('/api/admin/billing/invoices', {
+    preHandler: [app.authenticate, app.requirePermission('finance.read')],
+  }, routeHandler(handlers.adminBillingInvoicesHandler));
+
+  app.get('/api/admin/billing/events', {
+    preHandler: [app.authenticate, app.requirePermission('finance.read')],
+  }, routeHandler(handlers.adminBillingEventsHandler));
+
+  app.post('/api/admin/billing/invoices/:invoiceId/retry', {
+    preHandler: [app.authenticate, app.requirePermission('finance.write'), app.requireSensitiveConfirmation],
+    schema: schemas.adminBillingInvoiceParamsSchema,
+    config: { rateLimit: { max: 10, timeWindow: '10 minutes' } },
+  }, routeHandler(handlers.adminRetryBillingInvoiceHandler));
 }

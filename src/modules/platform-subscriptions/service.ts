@@ -78,7 +78,8 @@ const CURRENT_SUBSCRIPTION_STATUSES: PlatformSubscriptionStatus[] = [
   'cancel_at_period_end',
 ];
 
-const PAYABLE_INVOICE_STATUSES = ['pending', 'overdue'];
+const RETRYABLE_INVOICE_STATUSES = ['pending', 'overdue', 'refused'];
+const PAYABLE_INVOICE_STATUSES = RETRYABLE_INVOICE_STATUSES;
 const BILLING_RETRY_DELAYS_DAYS = [1, 3, 5];
 const SECRET_METADATA_KEYS = new Set([
   'creditCardToken',
@@ -516,6 +517,41 @@ export function resolveBusinessStatusAfterSubscriptionCreated(
 
 function roundCurrency(value: number) {
   return Math.round(Number(value) * 100) / 100;
+}
+
+export function isRetryablePlatformInvoiceStatus(status: string | null | undefined) {
+  return Boolean(status && RETRYABLE_INVOICE_STATUSES.includes(status.toLowerCase()));
+}
+
+export function buildAdminBillingOperationsSummary(input: {
+  invoices: Array<{
+    status?: string | null;
+    value?: number | string | null;
+    retry_count?: number | string | null;
+    next_retry_at?: string | null;
+  }>;
+  events: Array<{ severity?: string | null }>;
+  paymentMethods: Array<{ failed_attempts?: number | string | null }>;
+  now?: string;
+}) {
+  const nowMs = input.now ? new Date(input.now).getTime() : Date.now();
+  const retryableInvoices = input.invoices.filter(invoice => isRetryablePlatformInvoiceStatus(invoice.status));
+
+  return {
+    open_amount: roundCurrency(retryableInvoices.reduce((sum, invoice) => sum + Number(invoice.value || 0), 0)),
+    retryable_count: retryableInvoices.length,
+    pending_count: input.invoices.filter(invoice => invoice.status === 'pending').length,
+    overdue_count: input.invoices.filter(invoice => invoice.status === 'overdue').length,
+    refused_count: input.invoices.filter(invoice => invoice.status === 'refused').length,
+    exhausted_retry_count: retryableInvoices.filter(invoice => Number(invoice.retry_count || 0) >= BILLING_RETRY_DELAYS_DAYS.length).length,
+    due_retry_count: retryableInvoices.filter(invoice => {
+      if (!invoice.next_retry_at) return false;
+      return new Date(invoice.next_retry_at).getTime() <= nowMs;
+    }).length,
+    warning_event_count: input.events.filter(event => event.severity === 'warn').length,
+    error_event_count: input.events.filter(event => event.severity === 'error').length,
+    failing_payment_method_count: input.paymentMethods.filter(method => Number(method.failed_attempts || 0) > 0).length,
+  };
 }
 
 export function classifyPlanChange(currentValue: number, targetValue: number): PlanChangeType {
@@ -1578,4 +1614,155 @@ export async function adminGetRevenueStats() {
     pending_count: pending?.length || 0,
     overdue_count: overdue?.length || 0,
   };
+}
+
+export async function adminListBillingInvoices(filters: {
+  status?: string;
+  businessId?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const supabase = getSupabaseAdmin();
+  const page = Math.max(filters.page || 1, 1);
+  const limit = Math.min(Math.max(filters.limit || 25, 1), 100);
+  const offset = (page - 1) * limit;
+
+  let query = supabase
+    .from('platform_invoices')
+    .select(`
+      id,
+      business_id,
+      subscription_id,
+      asaas_payment_id,
+      value,
+      net_value,
+      billing_type,
+      status,
+      due_date,
+      paid_at,
+      invoice_url,
+      bank_slip_url,
+      purpose,
+      pending_plan_id,
+      pending_billing_cycle,
+      retry_count,
+      next_retry_at,
+      last_retry_at,
+      last_failure_message,
+      payment_method_id,
+      created_at,
+      updated_at,
+      business:businesses(id, name, slug, subscription_status),
+      subscription:platform_subscriptions(id, status, billing_cycle, value, next_due_date),
+      payment_method:platform_payment_methods(id, holder_name, card_brand, card_last4, is_default, status, failed_attempts, last_failure_message, last_used_at)
+    `, { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (filters.status) query = query.eq('status', filters.status);
+  if (filters.businessId) query = query.eq('business_id', filters.businessId);
+
+  const { data, error, count } = await query;
+  if (error) throw error;
+  return { data: data || [], total: count || 0, page, limit };
+}
+
+export async function adminListBillingEvents(filters: {
+  severity?: string;
+  businessId?: string;
+  invoiceId?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const supabase = getSupabaseAdmin();
+  const page = Math.max(filters.page || 1, 1);
+  const limit = Math.min(Math.max(filters.limit || 30, 1), 100);
+  const offset = (page - 1) * limit;
+
+  let query = supabase
+    .from('platform_billing_events')
+    .select(`
+      id,
+      business_id,
+      subscription_id,
+      invoice_id,
+      payment_method_id,
+      event_type,
+      severity,
+      message,
+      metadata,
+      created_at,
+      business:businesses(id, name, slug),
+      invoice:platform_invoices(id, status, value, due_date, asaas_payment_id),
+      payment_method:platform_payment_methods(id, holder_name, card_brand, card_last4)
+    `, { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (filters.severity) query = query.eq('severity', filters.severity);
+  if (filters.businessId) query = query.eq('business_id', filters.businessId);
+  if (filters.invoiceId) query = query.eq('invoice_id', filters.invoiceId);
+
+  const { data, error, count } = await query;
+  if (error) throw error;
+  return { data: data || [], total: count || 0, page, limit };
+}
+
+export async function adminGetBillingOperations() {
+  const supabase = getSupabaseAdmin();
+
+  const [invoiceResult, eventResult, methodResult] = await Promise.all([
+    supabase
+      .from('platform_invoices')
+      .select('id, status, value, retry_count, next_retry_at, due_date, last_failure_message, business_id')
+      .in('status', RETRYABLE_INVOICE_STATUSES)
+      .order('due_date', { ascending: true })
+      .limit(1000),
+    supabase
+      .from('platform_billing_events')
+      .select('id, severity, event_type, message, created_at')
+      .in('severity', ['warn', 'error'])
+      .order('created_at', { ascending: false })
+      .limit(250),
+    supabase
+      .from('platform_payment_methods')
+      .select('id, business_id, card_brand, card_last4, failed_attempts, last_failure_message')
+      .gt('failed_attempts', 0)
+      .eq('status', 'active')
+      .limit(250),
+  ]);
+
+  if (invoiceResult.error) throw invoiceResult.error;
+  if (eventResult.error) throw eventResult.error;
+  if (methodResult.error) throw methodResult.error;
+
+  return {
+    summary: buildAdminBillingOperationsSummary({
+      invoices: invoiceResult.data || [],
+      events: eventResult.data || [],
+      paymentMethods: methodResult.data || [],
+    }),
+    retryable_invoices: invoiceResult.data || [],
+    recent_warnings: eventResult.data || [],
+    failing_payment_methods: methodResult.data || [],
+  };
+}
+
+export async function adminRetryInvoiceWithDefaultCard(invoiceId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data: invoice, error } = await supabase
+    .from('platform_invoices')
+    .select('*')
+    .eq('id', invoiceId)
+    .single();
+
+  if (error || !invoice) throw new NotFoundError('Fatura nao encontrada.');
+  if (!isRetryablePlatformInvoiceStatus(invoice.status)) {
+    throw new AppError(409, 'Esta fatura nao pode ser reprocessada.', 'INVOICE_NOT_RETRYABLE');
+  }
+
+  const method = await getDefaultPaymentMethod(invoice.business_id);
+  if (!method) throw new NotFoundError('Nenhum cartao padrao ativo encontrado para esta empresa.');
+
+  return payInvoiceWithStoredPaymentMethod(invoice.business_id, invoice, method, { automatic: false });
 }

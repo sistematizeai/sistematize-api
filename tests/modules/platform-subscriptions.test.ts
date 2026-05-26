@@ -351,4 +351,49 @@ describe('Platform subscriptions hardening', () => {
       },
     });
   });
+
+  it('treats refused invoices as retryable platform billing invoices', async () => {
+    const { isRetryablePlatformInvoiceStatus } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(isRetryablePlatformInvoiceStatus('pending')).toBe(true);
+    expect(isRetryablePlatformInvoiceStatus('overdue')).toBe(true);
+    expect(isRetryablePlatformInvoiceStatus('refused')).toBe(true);
+    expect(isRetryablePlatformInvoiceStatus('confirmed')).toBe(false);
+    expect(isRetryablePlatformInvoiceStatus('received')).toBe(false);
+    expect(isRetryablePlatformInvoiceStatus(null)).toBe(false);
+  });
+
+  it('builds an operational billing summary for admin support', async () => {
+    const { buildAdminBillingOperationsSummary } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildAdminBillingOperationsSummary({
+      now: '2026-05-26T12:00:00.000Z',
+      invoices: [
+        { id: 'inv_pending', status: 'pending', value: 49.9, retry_count: 0, next_retry_at: '2026-05-26T11:00:00.000Z' },
+        { id: 'inv_overdue', status: 'overdue', value: 99.9, retry_count: 3, next_retry_at: null },
+        { id: 'inv_refused', status: 'refused', value: 199.9, retry_count: 2, next_retry_at: '2026-05-27T12:00:00.000Z' },
+        { id: 'inv_paid', status: 'confirmed', value: 49.9, retry_count: 0, next_retry_at: null },
+      ],
+      events: [
+        { severity: 'info' },
+        { severity: 'warn' },
+        { severity: 'error' },
+      ],
+      paymentMethods: [
+        { failed_attempts: 0 },
+        { failed_attempts: 2 },
+      ],
+    })).toEqual({
+      open_amount: 349.7,
+      retryable_count: 3,
+      pending_count: 1,
+      overdue_count: 1,
+      refused_count: 1,
+      exhausted_retry_count: 1,
+      due_retry_count: 1,
+      warning_event_count: 1,
+      error_event_count: 1,
+      failing_payment_method_count: 1,
+    });
+  });
 });
