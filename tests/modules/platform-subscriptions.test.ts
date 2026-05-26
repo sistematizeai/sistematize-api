@@ -114,4 +114,36 @@ describe('Platform subscriptions hardening', () => {
       appointmentsThisMonth: 20,
     })).toEqual({ allowed: true });
   });
+
+  it('builds internal checkout URLs for platform invoices', async () => {
+    const { buildSubscriptionCheckoutUrl } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildSubscriptionCheckoutUrl('7d2ab1f7-3b0d-4e9f-83f0-2dece7be0d91')).toBe(
+      '/dashboard/checkout/7d2ab1f7-3b0d-4e9f-83f0-2dece7be0d91',
+    );
+  });
+
+  it('stores only safe card metadata from Asaas tokenization', async () => {
+    const { buildStoredPaymentMethodRecord } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildStoredPaymentMethodRecord({
+      businessId: 'biz_123',
+      customerId: 'cus_123',
+      tokenization: {
+        creditCardToken: 'tok_123',
+        creditCardBrand: 'VISA',
+        creditCardNumber: '4444',
+      },
+      holderName: 'Cliente Teste',
+      rawCardNumber: '4111111111114444',
+    })).toEqual({
+      business_id: 'biz_123',
+      customer_id: 'cus_123',
+      asaas_credit_card_token: 'tok_123',
+      holder_name: 'Cliente Teste',
+      card_brand: 'VISA',
+      card_last4: '4444',
+      is_default: true,
+    });
+  });
 });

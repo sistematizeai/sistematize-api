@@ -69,3 +69,61 @@ export async function invoicesHandler(
   });
   reply.send(result);
 }
+
+export async function checkoutInvoiceHandler(
+  request: FastifyRequest<{ Params: { invoiceId: string } }>,
+  reply: FastifyReply,
+) {
+  const businessId = request.user.business_id!;
+  const result = await service.getCheckoutInvoice(businessId, request.params.invoiceId);
+  reply.send(result);
+}
+
+export async function checkoutCardPaymentHandler(
+  request: FastifyRequest<{
+    Params: { invoiceId: string };
+    Body: {
+      credit_card: {
+        holder_name: string;
+        number: string;
+        expiry_month: string;
+        expiry_year: string;
+        ccv: string;
+      };
+      holder_info: {
+        name: string;
+        email: string;
+        cpf_cnpj: string;
+        postal_code: string;
+        address_number: string;
+        phone?: string;
+      };
+    };
+  }>,
+  reply: FastifyReply,
+) {
+  const businessId = request.user.business_id!;
+  const result = await service.payCheckoutInvoiceWithCard(
+    businessId,
+    request.params.invoiceId,
+    {
+      creditCard: {
+        holderName: request.body.credit_card.holder_name,
+        number: request.body.credit_card.number,
+        expiryMonth: request.body.credit_card.expiry_month,
+        expiryYear: request.body.credit_card.expiry_year,
+        ccv: request.body.credit_card.ccv,
+      },
+      holderInfo: {
+        name: request.body.holder_info.name,
+        email: request.body.holder_info.email,
+        cpfCnpj: request.body.holder_info.cpf_cnpj,
+        postalCode: request.body.holder_info.postal_code,
+        addressNumber: request.body.holder_info.address_number,
+        phone: request.body.holder_info.phone,
+      },
+    },
+    request.ip,
+  );
+  reply.send(result);
+}

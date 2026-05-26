@@ -17,6 +17,38 @@ type AsaasSubscriptionPayment = {
   billingType?: string | null;
 };
 
+type AsaasPixQrCode = {
+  encodedImage?: string | null;
+  payload?: string | null;
+  expirationDate?: string | null;
+};
+
+type AsaasTokenizedCreditCard = {
+  creditCardToken?: string | null;
+  token?: string | null;
+  creditCardBrand?: string | null;
+  brand?: string | null;
+  creditCardNumber?: string | null;
+  last4?: string | null;
+};
+
+type CreditCardInput = {
+  holderName: string;
+  number: string;
+  expiryMonth: string;
+  expiryYear: string;
+  ccv: string;
+};
+
+type CreditCardHolderInfoInput = {
+  name: string;
+  email: string;
+  cpfCnpj: string;
+  postalCode: string;
+  addressNumber: string;
+  phone?: string;
+};
+
 type PlanLimits = {
   max_collaborators?: number | null;
   max_services?: number | null;
@@ -110,6 +142,58 @@ export function buildPlatformInvoiceRecord(input: {
     bank_slip_url: input.payment.bankSlipUrl || null,
     billing_type: input.payment.billingType || input.requestedBillingType,
   };
+}
+
+export function buildSubscriptionCheckoutUrl(invoiceId: string) {
+  return `/dashboard/checkout/${invoiceId}`;
+}
+
+function onlyDigits(value: string | null | undefined) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function resolveTokenizedCardLast4(tokenization: AsaasTokenizedCreditCard, rawCardNumber?: string) {
+  const fromAsaas = onlyDigits(tokenization.creditCardNumber || tokenization.last4);
+  const fromRaw = onlyDigits(rawCardNumber);
+  return (fromAsaas || fromRaw).slice(-4) || null;
+}
+
+function resolveCreditCardToken(tokenization: AsaasTokenizedCreditCard) {
+  const token = tokenization.creditCardToken || tokenization.token;
+  if (!token) {
+    throw new AppError(502, 'Asaas nao retornou o token do cartao.', 'ASAAS_CARD_TOKEN_MISSING');
+  }
+  return token;
+}
+
+export function buildStoredPaymentMethodRecord(input: {
+  businessId: string;
+  customerId: string;
+  tokenization: AsaasTokenizedCreditCard;
+  holderName: string;
+  rawCardNumber?: string;
+}) {
+  return {
+    business_id: input.businessId,
+    customer_id: input.customerId,
+    asaas_credit_card_token: resolveCreditCardToken(input.tokenization),
+    holder_name: input.holderName,
+    card_brand: input.tokenization.creditCardBrand || input.tokenization.brand || null,
+    card_last4: resolveTokenizedCardLast4(input.tokenization, input.rawCardNumber),
+    is_default: true,
+  };
+}
+
+async function upsertPlatformInvoice(record: Record<string, unknown>) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('platform_invoices')
+    .upsert(record, { onConflict: 'asaas_payment_id' })
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
 export function resolveBusinessStatusAfterSubscriptionCreated(
@@ -298,15 +382,16 @@ export async function createSubscription(businessId: string, planId: string, bil
 
   if (insertError) throw insertError;
 
+  let invoice = null;
   if (firstPayment?.id) {
-    await supabase.from('platform_invoices').upsert(buildPlatformInvoiceRecord({
+    invoice = await upsertPlatformInvoice(buildPlatformInvoiceRecord({
       businessId,
       subscriptionId: record.id,
       payment: firstPayment,
       fallbackValue: value,
       fallbackDueDate: dueDateStr,
       requestedBillingType: billingType,
-    }), { onConflict: 'asaas_payment_id' });
+    }));
   }
 
   await supabase
@@ -319,7 +404,14 @@ export async function createSubscription(businessId: string, planId: string, bil
     })
     .eq('id', businessId);
 
-  return { subscription: record, plan, payment_url: paymentUrl, payment: firstPayment };
+  return {
+    subscription: record,
+    plan,
+    payment_url: paymentUrl,
+    checkout_url: invoice?.id ? buildSubscriptionCheckoutUrl(invoice.id) : null,
+    payment: firstPayment,
+    invoice,
+  };
 }
 
 export async function getActiveSubscription(businessId: string) {
@@ -414,8 +506,9 @@ export async function upgradeSubscription(
     },
   });
 
+  let invoice = null;
   if (payment?.id) {
-    await supabase.from('platform_invoices').upsert({
+    invoice = await upsertPlatformInvoice({
       ...buildPlatformInvoiceRecord({
         businessId,
         subscriptionId: current.id,
@@ -427,7 +520,7 @@ export async function upgradeSubscription(
       purpose: 'plan_change',
       pending_plan_id: newPlanId,
       pending_billing_cycle: billingCycle,
-    }, { onConflict: 'asaas_payment_id' });
+    });
   }
 
   return {
@@ -439,7 +532,9 @@ export async function upgradeSubscription(
     value: newValue,
     billing_cycle: billingCycle,
     payment_url: getAsaasPaymentUrl(payment),
+    checkout_url: invoice?.id ? buildSubscriptionCheckoutUrl(invoice.id) : null,
     payment,
+    invoice,
   };
 }
 
@@ -538,6 +633,175 @@ export async function cancelSubscription(businessId: string) {
     .eq('id', businessId);
 
   return { success: true };
+}
+
+async function getOwnedInvoice(businessId: string, invoiceId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data: invoice, error } = await supabase
+    .from('platform_invoices')
+    .select('*')
+    .eq('id', invoiceId)
+    .eq('business_id', businessId)
+    .single();
+
+  if (error || !invoice) throw new NotFoundError('Fatura nao encontrada.');
+  return invoice;
+}
+
+async function maybeRefreshInvoicePix(invoice: any) {
+  const canUsePix = ['PIX', 'BOLETO', 'UNDEFINED', null].includes(invoice.billing_type);
+  const shouldRefresh = ['pending', 'overdue', 'PENDING', 'OVERDUE'].includes(invoice.status);
+  if (!canUsePix || !shouldRefresh || !invoice.asaas_payment_id) return invoice;
+
+  const { apiKey, environment } = getPlatformAsaas();
+  try {
+    const pix = await asaasRequest<AsaasPixQrCode>({
+      apiKey,
+      environment,
+      path: `/payments/${invoice.asaas_payment_id}/pixQrCode`,
+    });
+
+    if (!pix?.encodedImage && !pix?.payload) return invoice;
+
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from('platform_invoices')
+      .update({
+        pix_qr_code: pix.encodedImage || invoice.pix_qr_code || null,
+        pix_payload: pix.payload || invoice.pix_payload || null,
+      })
+      .eq('id', invoice.id)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data || invoice;
+  } catch {
+    return invoice;
+  }
+}
+
+export async function getCheckoutInvoice(businessId: string, invoiceId: string) {
+  const supabase = getSupabaseAdmin();
+  const invoice = await maybeRefreshInvoicePix(await getOwnedInvoice(businessId, invoiceId));
+
+  let subscription = null;
+  if (invoice.subscription_id) {
+    const { data, error } = await supabase
+      .from('platform_subscriptions')
+      .select('*, plan:plans!platform_subscriptions_plan_id_fkey(id, name, description, price_monthly, price_yearly, max_collaborators, max_services, max_appointments_month), pending_plan:plans!platform_subscriptions_pending_plan_id_fkey(id, name, description, price_monthly, price_yearly, max_collaborators, max_services, max_appointments_month)')
+      .eq('id', invoice.subscription_id)
+      .maybeSingle();
+
+    if (error) throw error;
+    subscription = data || null;
+  }
+
+  return {
+    invoice,
+    subscription,
+    checkout_url: buildSubscriptionCheckoutUrl(invoice.id),
+    asaas_fallback_url: getAsaasPaymentUrl({
+      invoiceUrl: invoice.invoice_url,
+      bankSlipUrl: invoice.bank_slip_url,
+    }),
+  };
+}
+
+export async function payCheckoutInvoiceWithCard(
+  businessId: string,
+  invoiceId: string,
+  input: { creditCard: CreditCardInput; holderInfo: CreditCardHolderInfoInput },
+  remoteIp: string,
+) {
+  const invoice = await getOwnedInvoice(businessId, invoiceId);
+  if (!['pending', 'overdue', 'PENDING', 'OVERDUE'].includes(invoice.status)) {
+    throw new AppError(409, 'Esta fatura nao esta pendente de pagamento.', 'INVOICE_NOT_PAYABLE');
+  }
+
+  const customerId = await ensurePlatformCustomer(businessId);
+  const { apiKey, environment } = getPlatformAsaas();
+  const tokenization = await asaasRequest<AsaasTokenizedCreditCard>({
+    apiKey,
+    environment,
+    path: '/creditCard/tokenizeCreditCard',
+    method: 'POST',
+    body: {
+      customer: customerId,
+      creditCard: input.creditCard,
+      creditCardHolderInfo: input.holderInfo,
+      remoteIp,
+    },
+  });
+
+  const storedMethod = buildStoredPaymentMethodRecord({
+    businessId,
+    customerId,
+    tokenization,
+    holderName: input.creditCard.holderName,
+    rawCardNumber: input.creditCard.number,
+  });
+
+  const supabase = getSupabaseAdmin();
+  let paymentMethod: {
+    id: string;
+    card_brand: string | null;
+    card_last4: string | null;
+    holder_name: string | null;
+    is_default: boolean;
+    created_at: string;
+  } | null = null;
+
+  try {
+    await supabase
+      .from('platform_payment_methods')
+      .update({ is_default: false })
+      .eq('business_id', businessId)
+      .eq('is_default', true);
+
+    const { data, error } = await supabase
+      .from('platform_payment_methods')
+      .insert(storedMethod)
+      .select('id, card_brand, card_last4, holder_name, is_default, created_at')
+      .single();
+
+    if (error) throw error;
+    paymentMethod = data;
+  } catch {
+    paymentMethod = null;
+  }
+
+  const payment = await asaasRequest<AsaasSubscriptionPayment>({
+    apiKey,
+    environment,
+    path: `/payments/${invoice.asaas_payment_id}/payWithCreditCard`,
+    method: 'POST',
+    body: {
+      creditCardToken: storedMethod.asaas_credit_card_token,
+    },
+  });
+
+  const { data: updatedInvoice, error: invoiceUpdateError } = await supabase
+    .from('platform_invoices')
+    .update({
+      billing_type: payment.billingType || 'CREDIT_CARD',
+      status: payment.status || invoice.status,
+      net_value: payment.netValue ?? invoice.net_value,
+      invoice_url: payment.invoiceUrl || invoice.invoice_url,
+      bank_slip_url: payment.bankSlipUrl || invoice.bank_slip_url,
+    })
+    .eq('id', invoice.id)
+    .select('*')
+    .single();
+
+  if (invoiceUpdateError) throw invoiceUpdateError;
+
+  return {
+    success: true,
+    invoice: updatedInvoice,
+    payment_method: paymentMethod,
+    paid: ['CONFIRMED', 'RECEIVED', 'confirmed', 'received'].includes(payment.status || ''),
+  };
 }
 
 export async function listInvoices(businessId: string, filters: { status?: string; page?: number; limit?: number }) {
