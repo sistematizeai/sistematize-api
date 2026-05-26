@@ -29,6 +29,8 @@ type UsageSnapshot = {
   appointmentsThisMonth: number;
 };
 
+type BusinessSubscriptionStatus = 'trial' | 'active' | 'paid' | 'overdue' | 'cancelled' | 'blocked';
+
 function getPlatformAsaas() {
   const env = loadEnv();
   if (!env.ASAAS_PLATFORM_API_KEY) {
@@ -85,6 +87,38 @@ function validateSubscriptionValue(value: number) {
 
 export function getAsaasPaymentUrl(payment: Pick<AsaasSubscriptionPayment, 'invoiceUrl' | 'bankSlipUrl'> | null | undefined) {
   return payment?.invoiceUrl || payment?.bankSlipUrl || null;
+}
+
+export function buildPlatformInvoiceRecord(input: {
+  businessId: string;
+  subscriptionId: string;
+  payment: AsaasSubscriptionPayment;
+  fallbackValue: number;
+  fallbackDueDate: string;
+  requestedBillingType: AsaasBillingType;
+}) {
+  return {
+    business_id: input.businessId,
+    subscription_id: input.subscriptionId,
+    asaas_payment_id: input.payment.id,
+    value: input.payment.value || input.fallbackValue,
+    net_value: input.payment.netValue || null,
+    status: input.payment.status || 'pending',
+    due_date: input.payment.dueDate || input.fallbackDueDate,
+    invoice_url: input.payment.invoiceUrl || null,
+    bank_slip_url: input.payment.bankSlipUrl || null,
+    billing_type: input.payment.billingType || input.requestedBillingType,
+  };
+}
+
+export function resolveBusinessStatusAfterSubscriptionCreated(
+  currentStatus: BusinessSubscriptionStatus,
+): BusinessSubscriptionStatus {
+  if (['blocked', 'overdue', 'cancelled', 'trial'].includes(currentStatus)) {
+    return currentStatus;
+  }
+
+  return 'active';
 }
 
 export function assertPlanCoversUsageSnapshot(plan: PlanLimits, usage: UsageSnapshot) {
@@ -182,6 +216,14 @@ export async function createSubscription(businessId: string, planId: string, bil
 
   if (planError || !plan) throw new NotFoundError('Plano nao encontrado ou inativo.');
 
+  const { data: businessStatus, error: businessStatusError } = await supabase
+    .from('businesses')
+    .select('subscription_status')
+    .eq('id', businessId)
+    .single();
+
+  if (businessStatusError || !businessStatus) throw new NotFoundError('Empresa nao encontrada.');
+
   const value = billingCycle === 'yearly' ? plan.price_yearly : plan.price_monthly;
   validateSubscriptionValue(value);
   await assertPlanCoversCurrentBusinessUsage(businessId, plan);
@@ -239,22 +281,24 @@ export async function createSubscription(businessId: string, planId: string, bil
   if (insertError) throw insertError;
 
   if (firstPayment?.id) {
-    await supabase.from('platform_invoices').upsert({
-      business_id: businessId,
-      subscription_id: record.id,
-      asaas_payment_id: firstPayment.id,
-      value: firstPayment.value || value,
-      net_value: firstPayment.netValue || null,
-      status: firstPayment.status || 'pending',
-      due_date: firstPayment.dueDate || dueDateStr,
-      invoice_url: firstPayment.invoiceUrl || null,
-      bank_slip_url: firstPayment.bankSlipUrl || null,
-    }, { onConflict: 'asaas_payment_id' });
+    await supabase.from('platform_invoices').upsert(buildPlatformInvoiceRecord({
+      businessId,
+      subscriptionId: record.id,
+      payment: firstPayment,
+      fallbackValue: value,
+      fallbackDueDate: dueDateStr,
+      requestedBillingType: billingType,
+    }), { onConflict: 'asaas_payment_id' });
   }
 
   await supabase
     .from('businesses')
-    .update({ plan_id: planId, subscription_status: 'active' })
+    .update({
+      plan_id: planId,
+      subscription_status: resolveBusinessStatusAfterSubscriptionCreated(
+        businessStatus.subscription_status as BusinessSubscriptionStatus,
+      ),
+    })
     .eq('id', businessId);
 
   return { subscription: record, plan, payment_url: paymentUrl, payment: firstPayment };
