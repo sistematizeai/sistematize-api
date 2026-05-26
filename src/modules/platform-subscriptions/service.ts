@@ -326,7 +326,7 @@ export async function getActiveSubscription(businessId: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('platform_subscriptions')
-    .select('*, plan:plans(id, name, description, price_monthly, price_yearly, max_collaborators, max_services, max_appointments_month)')
+    .select('*, plan:plans!platform_subscriptions_plan_id_fkey(id, name, description, price_monthly, price_yearly, max_collaborators, max_services, max_appointments_month)')
     .eq('business_id', businessId)
     .in('status', ['active', 'overdue'])
     .order('created_at', { ascending: false })
@@ -580,7 +580,7 @@ export async function adminListSubscriptions(filters: { status?: string; page?: 
 
   let query = supabase
     .from('platform_subscriptions')
-    .select('*, plan:plans(id, name, price_monthly, price_yearly), business:businesses(id, name, slug, subscription_status)', { count: 'exact' })
+    .select('*, plan:plans!platform_subscriptions_plan_id_fkey(id, name, price_monthly, price_yearly), business:businesses(id, name, slug, subscription_status)', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
