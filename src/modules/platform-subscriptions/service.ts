@@ -122,6 +122,27 @@ export function getAsaasPaymentUrl(payment: Pick<AsaasSubscriptionPayment, 'invo
   return payment?.invoiceUrl || payment?.bankSlipUrl || null;
 }
 
+export function normalizePlatformInvoiceStatus(asaasStatus: string | null | undefined) {
+  const map: Record<string, string> = {
+    PENDING: 'pending',
+    RECEIVED: 'received',
+    CONFIRMED: 'confirmed',
+    OVERDUE: 'overdue',
+    REFUNDED: 'refunded',
+    DELETED: 'deleted',
+    CANCELLED: 'cancelled',
+    RECEIVED_IN_CASH: 'received',
+    pending: 'pending',
+    received: 'received',
+    confirmed: 'confirmed',
+    overdue: 'overdue',
+    refunded: 'refunded',
+    deleted: 'deleted',
+    cancelled: 'cancelled',
+  };
+  return map[asaasStatus || ''] || 'pending';
+}
+
 export function buildPlatformInvoiceRecord(input: {
   businessId: string;
   subscriptionId: string;
@@ -136,7 +157,7 @@ export function buildPlatformInvoiceRecord(input: {
     asaas_payment_id: input.payment.id,
     value: input.payment.value || input.fallbackValue,
     net_value: input.payment.netValue || null,
-    status: input.payment.status || 'pending',
+    status: normalizePlatformInvoiceStatus(input.payment.status),
     due_date: input.payment.dueDate || input.fallbackDueDate,
     invoice_url: input.payment.invoiceUrl || null,
     bank_slip_url: input.payment.bankSlipUrl || null,
@@ -785,7 +806,7 @@ export async function payCheckoutInvoiceWithCard(
     .from('platform_invoices')
     .update({
       billing_type: payment.billingType || 'CREDIT_CARD',
-      status: payment.status || invoice.status,
+      status: normalizePlatformInvoiceStatus(payment.status || invoice.status),
       net_value: payment.netValue ?? invoice.net_value,
       invoice_url: payment.invoiceUrl || invoice.invoice_url,
       bank_slip_url: payment.bankSlipUrl || invoice.bank_slip_url,

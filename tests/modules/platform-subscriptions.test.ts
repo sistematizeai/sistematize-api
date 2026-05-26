@@ -53,12 +53,33 @@ describe('Platform subscriptions hardening', () => {
       asaas_payment_id: 'pay_123',
       value: 99.9,
       net_value: 96.2,
-      status: 'PENDING',
+      status: 'pending',
       due_date: '2026-05-26',
       invoice_url: 'https://sandbox.asaas.com/i/pay_123',
       bank_slip_url: null,
       billing_type: 'PIX',
     });
+  });
+
+  it('normalizes Asaas payment status before writing platform invoices', async () => {
+    const { buildPlatformInvoiceRecord } = await import('../../src/modules/platform-subscriptions/service.js');
+
+    expect(buildPlatformInvoiceRecord({
+      businessId: 'biz_123',
+      subscriptionId: 'sub_local_123',
+      payment: {
+        id: 'pay_123',
+        value: 99.9,
+        status: 'PENDING',
+        dueDate: '2026-05-26',
+        invoiceUrl: 'https://sandbox.asaas.com/i/pay_123',
+        bankSlipUrl: null,
+        billingType: 'UNDEFINED',
+      },
+      fallbackValue: 99.9,
+      fallbackDueDate: '2026-05-26',
+      requestedBillingType: 'UNDEFINED',
+    }).status).toBe('pending');
   });
 
   it('keeps restricted business statuses until payment is confirmed', async () => {
